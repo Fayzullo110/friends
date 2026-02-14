@@ -1,0 +1,9 @@
+{
+  "appTitle": "Friends",
+  "circles": "Circles",
+  "searchUsersTitle": "Search users",
+  "searchByUsername": "Search by username",
+  "loading": "Loading…",
+  "noUsers": "No users",
+  "searchFailed": "Search failed: {error}"
+}

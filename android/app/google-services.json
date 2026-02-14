@@ -1,0 +1,48 @@
+{
+  "project_info": {
+    "project_number": "566805698878",
+    "project_id": "friends-e4b0e",
+    "storage_bucket": "friends-e4b0e.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:566805698878:android:6ce79422239f14cdb2f46f",
+        "android_client_info": {
+          "package_name": "com.example.friends"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyD5VBPG-UTuP7MvKANf4OKv992k_RT26sA"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:566805698878:android:39e4a65ae0cf1aa5b2f46f",
+        "android_client_info": {
+          "package_name": "com.friends.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyD5VBPG-UTuP7MvKANf4OKv992k_RT26sA"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

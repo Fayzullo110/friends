@@ -1,0 +1,9 @@
+{
+  "appTitle": "Doʻstlar",
+  "circles": "Hikoyalar",
+  "searchUsersTitle": "Foydalanuvchilarni qidirish",
+  "searchByUsername": "Username bo‘yicha qidirish",
+  "loading": "Yuklanmoqda…",
+  "noUsers": "Foydalanuvchi topilmadi",
+  "searchFailed": "Qidiruv xatosi: {error}"
+}
