@@ -1,29 +1,65 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'dart:async';
 
 import '../models/post.dart';
+import 'auth_service.dart';
 
 class PostService {
   PostService._();
 
   static final PostService instance = PostService._();
 
-  final _postsRef =
-      FirebaseFirestore.instance.collection('posts').withConverter<Post>(
-            fromFirestore: (doc, _) => Post.fromDoc(doc),
-            toFirestore: (post, _) => post.toMap(),
-          );
-
   Stream<List<Post>> watchRecentPosts() {
-    return _postsRef
-        .orderBy('createdAt', descending: true)
-        .snapshots()
-        .map((snap) => snap.docs.map((d) => d.data()).toList())
-        // Swallow Firestore "offline" errors so the UI can stay up even if
-        // the client temporarily can't reach the backend.
-        .handleError((error, stackTrace) {
-      // Intentionally no rethrow: listeners will just keep the last good data
-      // (or an empty list) instead of crashing the app.
-    });
+    final controller = StreamController<List<Post>>();
+    List<Post>? last;
+
+    Future<void> tick() async {
+      try {
+        final rows = await AuthService.instance.api.getListOfMaps('/api/posts');
+        final next = rows.map(Post.fromJson).toList();
+        if (last == null || !_postsEqual(last!, next)) {
+          last = next;
+          controller.add(next);
+        }
+      } catch (_) {
+        // swallow errors to keep UI alive
+      }
+    }
+
+    tick();
+    final timer = Timer.periodic(const Duration(seconds: 8), (_) => tick());
+
+    controller.onCancel = () {
+      timer.cancel();
+      controller.close();
+    };
+
+    return controller.stream;
+  }
+
+  Stream<List<Post>> watchArchivedPosts({required String uid}) {
+    final controller = StreamController<List<Post>>();
+    List<Post>? last;
+
+    Future<void> tick() async {
+      try {
+        final rows = await AuthService.instance.api.getListOfMaps('/api/posts/archived');
+        final next = rows.map(Post.fromJson).toList();
+        if (last == null || !_postsEqual(last!, next)) {
+          last = next;
+          controller.add(next);
+        }
+      } catch (_) {
+        // swallow
+      }
+    }
+
+    tick();
+    final timer = Timer.periodic(const Duration(seconds: 10), (_) => tick());
+    controller.onCancel = () {
+      timer.cancel();
+      controller.close();
+    };
+    return controller.stream;
   }
 
   Future<void> createTextPost({
@@ -31,15 +67,13 @@ class PostService {
     required String authorUsername,
     required String text,
   }) async {
-    final post = Post(
-      id: '',
-      authorId: authorId,
-      authorUsername: authorUsername,
-      text: text,
-      createdAt: DateTime.now(),
-      mediaType: 'text',
+    await AuthService.instance.api.postNoContent(
+      '/api/posts',
+      body: {
+        'text': text,
+        'mediaType': 'text',
+      },
     );
-    await _postsRef.add(post);
   }
 
   Future<void> createMediaPost({
@@ -49,82 +83,36 @@ class PostService {
     required String mediaUrl,
     required String mediaType, // 'image' or 'video'
   }) async {
-    final post = Post(
-      id: '',
-      authorId: authorId,
-      authorUsername: authorUsername,
-      text: text,
-      createdAt: DateTime.now(),
-      mediaUrl: mediaUrl,
-      mediaType: mediaType,
+    await AuthService.instance.api.postNoContent(
+      '/api/posts',
+      body: {
+        'text': text,
+        'mediaUrl': mediaUrl,
+        'mediaType': mediaType,
+      },
     );
-    await _postsRef.add(post);
   }
 
   Future<void> toggleLike({
     required String postId,
     required String userId,
   }) async {
-    final docRef = FirebaseFirestore.instance.collection('posts').doc(postId);
-
-    try {
-      await FirebaseFirestore.instance.runTransaction((tx) async {
-        final snap = await tx.get(docRef);
-        if (!snap.exists) return;
-        final data = snap.data();
-        final likedBy = List<String>.from(
-          (data?['likedBy'] as List<dynamic>? ?? const []).map((e) => e as String),
-        );
-
-        if (likedBy.contains(userId)) {
-          likedBy.remove(userId);
-        } else {
-          likedBy.add(userId);
-        }
-
-        final likeCount = likedBy.length;
-
-        tx.update(docRef, {
-          'likedBy': likedBy,
-          'likeCount': likeCount,
-        });
-      });
-    } on FirebaseException catch (e) {
-      // When the client is offline or Firestore is temporarily unavailable,
-      // ignore the error so tapping like doesn't crash the app.
-      if (e.code == 'unavailable') {
-        return;
-      }
-      rethrow;
-    }
+    await AuthService.instance.api.postNoContent('/api/posts/$postId/like');
   }
 
   Future<void> setPinnedComment({
     required String postId,
     String? commentId,
   }) async {
-    final docRef = FirebaseFirestore.instance.collection('posts').doc(postId);
-
-    try {
-      await docRef.update({'pinnedCommentId': commentId});
-    } on FirebaseException catch (e) {
-      if (e.code == 'unavailable') {
-        return;
-      }
-      rethrow;
+    if (commentId == null || commentId.isEmpty) {
+      await AuthService.instance.api.postNoContent('/api/posts/$postId/unpin');
+      return;
     }
+    await AuthService.instance.api.postNoContent('/api/posts/$postId/pin/$commentId');
   }
 
   Future<void> incrementShareCount({required String postId}) async {
-    final docRef = FirebaseFirestore.instance.collection('posts').doc(postId);
-    try {
-      await docRef.update({'shareCount': FieldValue.increment(1)});
-    } on FirebaseException catch (e) {
-      if (e.code == 'unavailable') {
-        return;
-      }
-      rethrow;
-    }
+    await AuthService.instance.api.postNoContent('/api/posts/$postId/share');
   }
 
   Future<void> repost({
@@ -132,24 +120,52 @@ class PostService {
     required String newAuthorId,
     required String newAuthorUsername,
   }) async {
-    final sourceRef = FirebaseFirestore.instance.collection('posts').doc(sourcePostId);
-    final snap = await sourceRef.get();
-    if (!snap.exists) return;
-
-    final data = snap.data() ?? <String, dynamic>{};
-
-    final repost = Post(
-      id: '',
-      authorId: newAuthorId,
-      authorUsername: newAuthorUsername,
-      text: data['text'] as String? ?? '',
-      createdAt: DateTime.now(),
-      mediaUrl: data['mediaUrl'] as String?,
-      mediaType: data['mediaType'] as String? ?? 'text',
-    );
-
-    await _postsRef.add(repost);
-
+    // Backend doesn't currently support repost; treat as share for now.
     await incrementShareCount(postId: sourcePostId);
   }
+
+  Future<Post> updatePost({required String postId, required String text}) async {
+    final trimmed = text.trim();
+    if (trimmed.isEmpty) throw Exception('Text cannot be empty');
+    return await AuthService.instance.api.patchJson(
+      '/api/posts/$postId',
+      {'text': trimmed},
+      (json) => Post.fromJson(json),
+    );
+  }
+
+  Future<void> archivePost({required String postId}) async {
+    await AuthService.instance.api.postNoContent('/api/posts/$postId/archive');
+  }
+
+  Future<void> restorePost({required String postId}) async {
+    await AuthService.instance.api.postNoContent('/api/posts/$postId/restore');
+  }
+
+  Future<void> deletePost({required String postId}) async {
+    await AuthService.instance.api.deleteNoContent('/api/posts/$postId');
+  }
+
+  Future<Post> getPostById({required String postId}) async {
+    return await AuthService.instance.api.getJson(
+      '/api/posts/$postId',
+      (json) => Post.fromJson(json),
+    );
+  }
+}
+
+bool _postsEqual(List<Post> a, List<Post> b) {
+  if (identical(a, b)) return true;
+  if (a.length != b.length) return false;
+  for (var i = 0; i < a.length; i++) {
+    final pa = a[i];
+    final pb = b[i];
+    if (pa.id != pb.id) return false;
+    if (pa.likeCount != pb.likeCount) return false;
+    if (pa.commentCount != pb.commentCount) return false;
+    if (pa.shareCount != pb.shareCount) return false;
+    if (pa.text != pb.text) return false;
+    if (pa.mediaUrl != pb.mediaUrl) return false;
+  }
+  return true;
 }

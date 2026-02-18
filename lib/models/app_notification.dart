@@ -1,5 +1,3 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
-
 enum AppNotificationType {
   like,
   comment,
@@ -27,18 +25,20 @@ class AppNotification {
     this.postId,
   });
 
-  factory AppNotification.fromDoc(DocumentSnapshot<Map<String, dynamic>> doc) {
-    final data = doc.data() ?? {};
-    final typeStr = data['type'] as String? ?? 'like';
+  factory AppNotification.fromJson(Map<String, dynamic> json) {
+    final typeStr = json['type'] as String? ?? 'like';
 
     return AppNotification(
-      id: doc.id,
+      id: json['id'].toString(),
       type: _typeFromString(typeStr),
-      fromUserId: data['fromUserId'] as String? ?? '',
-      fromUsername: data['fromUsername'] as String? ?? '',
-      postId: data['postId'] as String?,
-      createdAt: (data['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
-      isRead: data['isRead'] as bool? ?? false,
+      fromUserId: json['fromUserId']?.toString() ?? '',
+      fromUsername: json['fromUsername'] as String? ?? '',
+      postId: json['postId']?.toString(),
+      createdAt: DateTime.fromMillisecondsSinceEpoch(
+        (json['createdAt'] as num?)?.toInt() ?? 0,
+        isUtc: false,
+      ),
+      isRead: json['isRead'] as bool? ?? false,
     );
   }
 
@@ -48,7 +48,7 @@ class AppNotification {
       'fromUserId': fromUserId,
       'fromUsername': fromUsername,
       'postId': postId,
-      'createdAt': Timestamp.fromDate(createdAt),
+      'createdAt': createdAt.toIso8601String(),
       'isRead': isRead,
     };
   }

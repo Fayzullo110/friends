@@ -1,16 +1,17 @@
-import 'dart:io';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
-import 'package:firebase_auth/firebase_auth.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:firebase_storage/firebase_storage.dart';
 
 import '../../models/app_user.dart';
 import '../../models/post.dart';
+import '../../models/reel.dart';
+import '../../services/auth_service.dart';
 import '../../services/follow_service.dart';
 import '../../services/post_service.dart';
+import '../../services/reel_service.dart';
 import '../../theme/ios_icons.dart';
+import '../post/post_viewer_screen.dart';
+import '../reels/reels_screen.dart';
 import 'edit_profile_screen.dart';
 import 'settings_screen.dart';
 
@@ -27,6 +28,21 @@ class _ProfileScreenState extends State<ProfileScreen> {
   _ProfileTabType _selectedTab = _ProfileTabType.grid;
   final ImagePicker _picker = ImagePicker();
 
+  Future<AppUser?> _loadUser() async {
+    if (widget.userId == null) {
+      return await AuthService.instance.api
+          .getJson('/api/users/me', (json) => AppUser.fromJson(json));
+    }
+
+    final id = int.parse(widget.userId!);
+    return await AuthService.instance.api
+        .getJson('/api/users/$id', (json) => AppUser.fromJson(json));
+  }
+
+  Stream<List<AppUser>> _usersStreamFromIds(Stream<List<String>> idsStream) {
+    return idsStream.asyncMap((ids) => _fetchUsersByIds(ids));
+  }
+
   Future<void> _pickBackgroundImage(AppUser user) async {
     final XFile? pickedFile = await _picker.pickImage(
       source: ImageSource.gallery,
@@ -38,19 +54,19 @@ class _ProfileScreenState extends State<ProfileScreen> {
     if (pickedFile == null) return;
 
     try {
-      final file = File(pickedFile.path);
-      final storageRef = FirebaseStorage.instance
-          .ref()
-          .child('backgrounds')
-          .child('${user.id}_${DateTime.now().millisecondsSinceEpoch}.jpg');
+      final bytes = await pickedFile.readAsBytes();
+      final res = await AuthService.instance.api.uploadFile(
+        path: '/api/uploads',
+        bytes: bytes,
+        filename: pickedFile.name,
+      );
+      final url = (res['url'] as String?) ?? '';
+      if (url.isEmpty) throw Exception('Upload failed');
 
-      await storageRef.putFile(file);
-      final downloadUrl = await storageRef.getDownloadURL();
-
-      await FirebaseFirestore.instance
-          .collection('users')
-          .doc(user.id)
-          .update({'backgroundImageUrl': downloadUrl});
+      await AuthService.instance.api.patchNoContent(
+        '/api/users/me',
+        body: {'backgroundImageUrl': url},
+      );
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -70,22 +86,25 @@ class _ProfileScreenState extends State<ProfileScreen> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
 
-    return FutureBuilder<DocumentSnapshot<Map<String, dynamic>>>(
-      future: FirebaseFirestore.instance
-          .collection('users')
-          .doc(widget.userId ?? FirebaseAuth.instance.currentUser?.uid)
-          .get(),
+    return FutureBuilder<AppUser?>(
+      future: _loadUser(),
       builder: (context, snap) {
-        if (!snap.hasData || !snap.data!.exists) {
+        if (snap.connectionState == ConnectionState.waiting) {
+          return const Scaffold(
+            body: Center(child: CircularProgressIndicator()),
+          );
+        }
+
+        final user = snap.data;
+        if (user == null) {
           return Scaffold(
             appBar: AppBar(),
             body: const Center(child: Text('User not found')),
           );
         }
 
-        final user = AppUser.fromDoc(snap.data!);
-        final isOwnProfile = widget.userId == null || widget.userId == FirebaseAuth.instance.currentUser?.uid;
-        final currentUser = FirebaseAuth.instance.currentUser;
+        final me = AuthService.instance.currentUser;
+        final isOwnProfile = widget.userId == null || (me != null && me.id == user.id);
 
         return Scaffold(
           body: Stack(
@@ -122,7 +141,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     ),
                   ),
                 ),
-                ),
+              ),
               CustomScrollView(
                 slivers: [
                   SliverAppBar(
@@ -298,23 +317,23 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                     Expanded(
                                       child: StreamBuilder<bool>(
                                         stream: FollowService.instance.watchIsFollowing(
-                                          fromUserId: currentUser?.uid ?? '',
+                                          fromUserId: (me?.id ?? ''),
                                           toUserId: user.id,
                                         ),
                                         builder: (context, snapshot) {
                                           final isFollowing = snapshot.data ?? false;
                                           return ElevatedButton(
                                             onPressed: () async {
-                                              if (currentUser == null) return;
+                                              if (me == null) return;
                                               try {
                                                 if (isFollowing) {
                                                   await FollowService.instance.unfollow(
-                                                    fromUserId: currentUser.uid,
+                                                    fromUserId: me.id,
                                                     toUserId: user.id,
                                                   );
                                                 } else {
                                                   await FollowService.instance.follow(
-                                                    fromUserId: currentUser.uid,
+                                                    fromUserId: me.id,
                                                     toUserId: user.id,
                                                   );
                                                 }
@@ -465,30 +484,106 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                 itemCount: mediaPosts.length,
                                 itemBuilder: (context, index) {
                                   final p = mediaPosts[index];
-                                  return ClipRRect(
-                                    borderRadius: BorderRadius.circular(4),
-                                    child: Stack(
-                                      fit: StackFit.expand,
-                                      children: [
-                                        p.mediaUrl != null
-                                            ? Image.network(
-                                                p.mediaUrl!,
-                                                fit: BoxFit.cover,
-                                              )
-                                            : Container(
-                                                color: theme.colorScheme.surfaceContainer,
-                                              ),
-                                        if (p.mediaType == 'video')
-                                          const Positioned(
-                                            bottom: 4,
-                                            right: 4,
-                                            child: Icon(
-                                              IOSIcons.playCircleFill,
-                                              color: Colors.white,
-                                              size: 20,
-                                            ),
+                                  return GestureDetector(
+                                    onTap: () {
+                                      Navigator.of(context).push(
+                                        MaterialPageRoute(
+                                          builder: (_) => PostViewerScreen(
+                                            posts: mediaPosts,
+                                            initialIndex: index,
                                           ),
-                                      ],
+                                        ),
+                                      );
+                                    },
+                                    child: ClipRRect(
+                                      borderRadius: BorderRadius.circular(4),
+                                      child: Stack(
+                                        fit: StackFit.expand,
+                                        children: [
+                                          p.mediaUrl != null
+                                              ? Image.network(
+                                                  p.mediaUrl!,
+                                                  fit: BoxFit.cover,
+                                                )
+                                              : Container(
+                                                  color: theme.colorScheme.surfaceContainer,
+                                                ),
+                                          if (p.mediaType == 'video')
+                                            const Positioned(
+                                              bottom: 4,
+                                              right: 4,
+                                              child: Icon(
+                                                IOSIcons.playCircleFill,
+                                                color: Colors.white,
+                                                size: 20,
+                                              ),
+                                            ),
+                                          if (isOwnProfile)
+                                            Positioned(
+                                              top: 4,
+                                              right: 4,
+                                              child: PopupMenuButton<String>(
+                                                padding: EdgeInsets.zero,
+                                                iconSize: 18,
+                                                icon: Container(
+                                                  padding: const EdgeInsets.all(4),
+                                                  decoration: BoxDecoration(
+                                                    color: Colors.black.withOpacity(0.35),
+                                                    shape: BoxShape.circle,
+                                                  ),
+                                                  child: const Icon(
+                                                    IOSIcons.more,
+                                                    color: Colors.white,
+                                                    size: 14,
+                                                  ),
+                                                ),
+                                                onSelected: (value) async {
+                                                  try {
+                                                    if (value == 'archive') {
+                                                      await PostService.instance
+                                                          .archivePost(postId: p.id);
+                                                    }
+                                                    if (value == 'delete') {
+                                                      await PostService.instance
+                                                          .deletePost(postId: p.id);
+                                                    }
+                                                    if (context.mounted) {
+                                                      ScaffoldMessenger.of(context)
+                                                          .showSnackBar(
+                                                        SnackBar(
+                                                          content: Text(
+                                                            value == 'archive'
+                                                                ? 'Post archived'
+                                                                : 'Post deleted',
+                                                          ),
+                                                        ),
+                                                      );
+                                                    }
+                                                  } catch (_) {
+                                                    if (context.mounted) {
+                                                      ScaffoldMessenger.of(context)
+                                                          .showSnackBar(
+                                                        const SnackBar(
+                                                          content: Text('Action failed'),
+                                                        ),
+                                                      );
+                                                    }
+                                                  }
+                                                },
+                                                itemBuilder: (_) => const [
+                                                  PopupMenuItem(
+                                                    value: 'archive',
+                                                    child: Text('Archive'),
+                                                  ),
+                                                  PopupMenuItem(
+                                                    value: 'delete',
+                                                    child: Text('Delete'),
+                                                  ),
+                                                ],
+                                              ),
+                                            ),
+                                        ],
+                                      ),
                                     ),
                                   );
                                 },
@@ -508,6 +603,18 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                 itemBuilder: (context, index) {
                                   final p = textPosts[index];
                                   return _ProfileTweetCard(
+                                    postId: p.id,
+                                    onOpen: () {
+                                      Navigator.of(context).push(
+                                        MaterialPageRoute(
+                                          builder: (_) => PostViewerScreen(
+                                            posts: textPosts,
+                                            initialIndex: index,
+                                          ),
+                                        ),
+                                      );
+                                    },
+                                    isOwner: isOwnProfile,
                                     username: user.username,
                                     timeAgo: _formatTimeAgo(p.createdAt),
                                     text: p.text,
@@ -519,6 +626,223 @@ class _ProfileScreenState extends State<ProfileScreen> {
                               );
 
                             case _ProfileTabType.reels:
+                              return StreamBuilder<List<Reel>>(
+                                stream: ReelService.instance.watchReels(),
+                                builder: (context, snap) {
+                                  final allReels = snap.data ?? const <Reel>[];
+                                  final myReels = allReels
+                                      .where((r) => r.authorId == user.id)
+                                      .toList();
+
+                                  if (myReels.isEmpty) {
+                                    return Column(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Icon(
+                                          IOSIcons.film,
+                                          size: 40,
+                                          color: theme.colorScheme.onSurface
+                                              .withOpacity(0.6),
+                                        ),
+                                        const SizedBox(height: 12),
+                                        Text(
+                                          'No reels yet',
+                                          style: theme.textTheme.titleSmall,
+                                        ),
+                                      ],
+                                    );
+                                  }
+
+                                  return GridView.builder(
+                                    shrinkWrap: true,
+                                    physics:
+                                        const NeverScrollableScrollPhysics(),
+                                    gridDelegate:
+                                        const SliverGridDelegateWithFixedCrossAxisCount(
+                                      crossAxisCount: 3,
+                                      crossAxisSpacing: 2,
+                                      mainAxisSpacing: 2,
+                                    ),
+                                    itemCount: myReels.length,
+                                    itemBuilder: (context, index) {
+                                      final r = myReels[index];
+                                      return GestureDetector(
+                                        onTap: () {
+                                          Navigator.of(context).push(
+                                            MaterialPageRoute(
+                                              builder: (_) => ReelsScreen(
+                                                initialReelId: r.id,
+                                              ),
+                                            ),
+                                          );
+                                        },
+                                        child: ClipRRect(
+                                          borderRadius:
+                                              BorderRadius.circular(4),
+                                          child: Stack(
+                                            fit: StackFit.expand,
+                                            children: [
+                                              if (r.mediaType == 'image' &&
+                                                  r.mediaUrl != null &&
+                                                  r.mediaUrl!.isNotEmpty)
+                                                Image.network(
+                                                  r.mediaUrl!,
+                                                  fit: BoxFit.cover,
+                                                )
+                                              else
+                                                Container(
+                                                  color: theme.colorScheme
+                                                      .surfaceContainer,
+                                                  child: const Center(
+                                                    child: Icon(
+                                                      IOSIcons.playCircle,
+                                                      size: 24,
+                                                    ),
+                                                  ),
+                                                ),
+                                              const Positioned(
+                                                bottom: 4,
+                                                right: 4,
+                                                child: Icon(
+                                                  IOSIcons.playCircleFill,
+                                                  color: Colors.white,
+                                                  size: 18,
+                                                ),
+                                              ),
+                                              if (isOwnProfile)
+                                                Positioned(
+                                                  top: 4,
+                                                  right: 4,
+                                                  child: PopupMenuButton<String>(
+                                                    padding: EdgeInsets.zero,
+                                                    iconSize: 18,
+                                                    icon: Container(
+                                                      padding: const EdgeInsets.all(4),
+                                                      decoration: BoxDecoration(
+                                                        color: Colors.black
+                                                            .withOpacity(0.35),
+                                                        shape: BoxShape.circle,
+                                                      ),
+                                                      child: const Icon(
+                                                        IOSIcons.more,
+                                                        color: Colors.white,
+                                                        size: 14,
+                                                      ),
+                                                    ),
+                                                    onSelected: (value) async {
+                                                      try {
+                                                        if (value == 'edit') {
+                                                          final controller =
+                                                              TextEditingController(
+                                                                  text: r.caption);
+                                                          final ok =
+                                                              await showDialog<bool>(
+                                                            context: context,
+                                                            builder: (ctx) {
+                                                              return AlertDialog(
+                                                                title: const Text(
+                                                                    'Edit reel'),
+                                                                content: TextField(
+                                                                  controller:
+                                                                      controller,
+                                                                  maxLines: 4,
+                                                                  decoration:
+                                                                      const InputDecoration(
+                                                                    border:
+                                                                        OutlineInputBorder(),
+                                                                  ),
+                                                                ),
+                                                                actions: [
+                                                                  TextButton(
+                                                                    onPressed: () =>
+                                                                        Navigator.of(ctx)
+                                                                            .pop(false),
+                                                                    child: const Text(
+                                                                        'Cancel'),
+                                                                  ),
+                                                                  FilledButton(
+                                                                    onPressed: () =>
+                                                                        Navigator.of(ctx)
+                                                                            .pop(true),
+                                                                    child: const Text(
+                                                                        'Save'),
+                                                                  ),
+                                                                ],
+                                                              );
+                                                            },
+                                                          );
+                                                          if (ok == true) {
+                                                            await ReelService
+                                                                .instance
+                                                                .updateReel(
+                                                              reelId: r.id,
+                                                              caption:
+                                                                  controller.text,
+                                                            );
+                                                          }
+                                                          controller.dispose();
+                                                        }
+                                                        if (value == 'archive') {
+                                                          await ReelService.instance
+                                                              .archiveReel(
+                                                                  reelId: r.id);
+                                                        }
+                                                        if (value == 'delete') {
+                                                          await ReelService.instance
+                                                              .deleteReel(
+                                                                  reelId: r.id);
+                                                        }
+                                                        if (context.mounted) {
+                                                          ScaffoldMessenger.of(context)
+                                                              .showSnackBar(
+                                                            SnackBar(
+                                                              content: Text(
+                                                                value == 'archive'
+                                                                    ? 'Reel archived'
+                                                                    : value == 'delete'
+                                                                        ? 'Reel deleted'
+                                                                        : 'Reel updated',
+                                                              ),
+                                                            ),
+                                                          );
+                                                        }
+                                                      } catch (_) {
+                                                        if (context.mounted) {
+                                                          ScaffoldMessenger.of(context)
+                                                              .showSnackBar(
+                                                            const SnackBar(
+                                                              content: Text(
+                                                                  'Action failed'),
+                                                            ),
+                                                          );
+                                                        }
+                                                      }
+                                                    },
+                                                    itemBuilder: (_) => const [
+                                                      PopupMenuItem(
+                                                        value: 'edit',
+                                                        child: Text('Edit'),
+                                                      ),
+                                                      PopupMenuItem(
+                                                        value: 'archive',
+                                                        child: Text('Archive'),
+                                                      ),
+                                                      PopupMenuItem(
+                                                        value: 'delete',
+                                                        child: Text('Delete'),
+                                                      ),
+                                                    ],
+                                                  ),
+                                                ),
+                                            ],
+                                          ),
+                                        ),
+                                      );
+                                    },
+                                  );
+                                },
+                              );
+
                             case _ProfileTabType.tagged:
                               // For now, reuse the existing fallback.
                               return Column(
@@ -679,19 +1003,16 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-  Stream<List<AppUser>> _usersStreamFromIds(Stream<List<String>> idsStream) {
-    return idsStream.asyncMap((ids) async {
-      if (ids.isEmpty) return <AppUser>[];
+  Future<List<AppUser>> _fetchUsersByIds(List<String> ids) async {
+    if (ids.isEmpty) return [];
+
+    // Firestore does not support whereIn with > 10; we support up to 30.
+    return Future(() async {
       final limited = ids.length > 30 ? ids.sublist(0, 30) : ids;
-      final docs = await Future.wait(
-        limited.map(
-          (uid) => FirebaseFirestore.instance.collection('users').doc(uid).get(),
-        ),
-      );
-      return docs
-          .where((d) => d.exists)
-          .map((d) => AppUser.fromDoc(d))
-          .toList();
+      final joined = limited.join(',');
+      final rows = await AuthService.instance.api
+          .getListOfMaps('/api/users?ids=$joined');
+      return rows.map(AppUser.fromJson).toList();
     });
   }
 
@@ -701,19 +1022,19 @@ class _ProfileScreenState extends State<ProfileScreen> {
     if (pickedFile == null) return;
 
     try {
-      final storageRef = FirebaseStorage.instance
-          .ref()
-          .child('users')
-          .child(user.id)
-          .child('avatar_${DateTime.now().millisecondsSinceEpoch}.jpg');
+      final bytes = await pickedFile.readAsBytes();
+      final res = await AuthService.instance.api.uploadFile(
+        path: '/api/uploads',
+        bytes: bytes,
+        filename: pickedFile.name,
+      );
+      final downloadUrl = (res['url'] as String?) ?? '';
+      if (downloadUrl.isEmpty) throw Exception('Upload failed');
 
-      await storageRef.putFile(File(pickedFile.path));
-      final downloadUrl = await storageRef.getDownloadURL();
-
-      await FirebaseFirestore.instance
-          .collection('users')
-          .doc(user.id)
-          .update({'photoUrl': downloadUrl});
+      await AuthService.instance.api.patchNoContent(
+        '/api/users/me',
+        body: {'photoUrl': downloadUrl},
+      );
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -927,6 +1248,9 @@ class _ProfileTabButton extends StatelessWidget {
 }
 
 class _ProfileTweetCard extends StatelessWidget {
+  final String postId;
+  final VoidCallback? onOpen;
+  final bool isOwner;
   final String username;
   final String timeAgo;
   final String text;
@@ -935,6 +1259,9 @@ class _ProfileTweetCard extends StatelessWidget {
   final int shareCount;
 
   const _ProfileTweetCard({
+    required this.postId,
+    this.onOpen,
+    required this.isOwner,
     required this.username,
     required this.timeAgo,
     required this.text,
@@ -943,69 +1270,180 @@ class _ProfileTweetCard extends StatelessWidget {
     required this.shareCount,
   });
 
+  Future<void> _edit(BuildContext context) async {
+    final controller = TextEditingController(text: text);
+    try {
+      final ok = await showDialog<bool>(
+        context: context,
+        builder: (context) {
+          return AlertDialog(
+            title: const Text('Edit post'),
+            content: TextField(
+              controller: controller,
+              maxLines: 5,
+              decoration: const InputDecoration(
+                border: OutlineInputBorder(),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(false),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.of(context).pop(true),
+                child: const Text('Save'),
+              ),
+            ],
+          );
+        },
+      );
+      if (ok != true) return;
+      await PostService.instance.updatePost(
+        postId: postId,
+        text: controller.text,
+      );
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Post updated')),
+      );
+    } finally {
+      controller.dispose();
+    }
+  }
+
+  Future<void> _archive(BuildContext context) async {
+    await PostService.instance.archivePost(postId: postId);
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Post archived')),
+    );
+  }
+
+  Future<void> _delete(BuildContext context) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Delete post?'),
+          content: const Text('This will remove the post from your feed.'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('Delete'),
+            ),
+          ],
+        );
+      },
+    );
+    if (confirm != true) return;
+    await PostService.instance.deletePost(postId: postId);
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Post deleted')),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 12),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      username,
-                      style: theme.textTheme.titleSmall?.copyWith(
-                        fontWeight: FontWeight.w600,
+    return InkWell(
+      onTap: onOpen,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        username,
+                        style: theme.textTheme.titleSmall?.copyWith(
+                          fontWeight: FontWeight.w600,
+                        ),
                       ),
-                    ),
-                    Text(
-                      timeAgo,
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: theme.colorScheme.onSurface.withOpacity(0.6),
+                      Text(
+                        timeAgo,
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: theme.colorScheme.onSurface.withOpacity(0.6),
+                        ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
-              ),
-              IconButton(
-                onPressed: () {},
-                icon: const Icon(IOSIcons.more),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Text(
-            text,
-            style: theme.textTheme.bodyMedium,
-          ),
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              _ProfileTweetStat(
-                icon: IOSIcons.heart,
-                count: likeCount,
-                onTap: () {},
-              ),
-              const SizedBox(width: 24),
-              _ProfileTweetStat(
-                icon: IOSIcons.chatBubbleOutline,
-                count: commentCount,
-                onTap: () {},
-              ),
-              const SizedBox(width: 24),
-              _ProfileTweetStat(
-                icon: IOSIcons.share,
-                count: shareCount,
-                onTap: () {},
-              ),
-            ],
-          ),
-        ],
+                PopupMenuButton<String>(
+                  enabled: isOwner,
+                  icon: const Icon(IOSIcons.more),
+                  onSelected: (value) async {
+                    if (!isOwner) return;
+                    try {
+                      if (value == 'edit') await _edit(context);
+                      if (value == 'archive') await _archive(context);
+                      if (value == 'delete') await _delete(context);
+                    } catch (_) {
+                      if (!context.mounted) return;
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Action failed')),
+                      );
+                    }
+                  },
+                  itemBuilder: (context) {
+                    if (!isOwner) return const <PopupMenuEntry<String>>[];
+                    return const [
+                      PopupMenuItem(
+                        value: 'edit',
+                        child: Text('Edit'),
+                      ),
+                      PopupMenuItem(
+                        value: 'archive',
+                        child: Text('Archive'),
+                      ),
+                      PopupMenuItem(
+                        value: 'delete',
+                        child: Text('Delete'),
+                      ),
+                    ];
+                  },
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text(
+              text,
+              style: theme.textTheme.bodyMedium,
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                _ProfileTweetStat(
+                  icon: IOSIcons.heart,
+                  count: likeCount,
+                  onTap: () {},
+                ),
+                const SizedBox(width: 24),
+                _ProfileTweetStat(
+                  icon: IOSIcons.chatBubbleOutline,
+                  count: commentCount,
+                  onTap: () {},
+                ),
+                const SizedBox(width: 24),
+                _ProfileTweetStat(
+                  icon: IOSIcons.share,
+                  count: shareCount,
+                  onTap: () {},
+                ),
+              ],
+            ),
+          ],
+        ),
       ),
     );
   }

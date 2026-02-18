@@ -1,15 +1,17 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
+
+import '../../models/app_user.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:just_audio/just_audio.dart';
 
 import '../../models/story.dart';
 import '../../models/story_comment.dart';
+import '../../models/chat.dart';
 import '../../services/chat_service.dart';
 import '../../services/story_service.dart';
+import '../../services/auth_service.dart';
 import '../../theme/ios_icons.dart';
 import '../chat/video_player_screen.dart';
 
@@ -83,6 +85,25 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
     _markSeen(_currentIndex);
     _loadMusicForIndex(_currentIndex, autoPlay: true);
     _startProgressForIndex(_currentIndex);
+  }
+
+  Future<void> _showLikes() async {
+    final story = widget.stories[_currentIndex];
+    if (story.likedBy.isEmpty) return;
+
+    _pauseForHold();
+
+    await showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) {
+        return _StoryLikesSheet(
+          userIds: story.likedBy,
+          onClose: _resumeAfterHold,
+        );
+      },
+    ).whenComplete(_resumeAfterHold);
   }
 
   @override
@@ -171,13 +192,13 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
   }
 
   Future<void> _markSeen(int index) async {
-    final authUser = FirebaseAuth.instance.currentUser;
-    if (authUser == null) return;
+    final me = AuthService.instance.currentUser;
+    if (me == null) return;
     if (index < 0 || index >= widget.stories.length) return;
     final story = widget.stories[index];
     await StoryService.instance.markSeen(
       storyId: story.id,
-      userId: authUser.uid,
+      userId: me.id,
     );
   }
 
@@ -240,8 +261,8 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
   }
 
   Future<void> _toggleLike() async {
-    final authUser = FirebaseAuth.instance.currentUser;
-    if (authUser == null) {
+    final me = AuthService.instance.currentUser;
+    if (me == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Please sign in to like stories')),
       );
@@ -250,7 +271,7 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
     final story = widget.stories[_currentIndex];
     await StoryService.instance.toggleLike(
       storyId: story.id,
-      userId: authUser.uid,
+      userId: me.id,
     );
   }
 
@@ -616,7 +637,7 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
 
   Widget _buildActionBar() {
     final story = widget.stories[_currentIndex];
-    final currentUserId = FirebaseAuth.instance.currentUser?.uid;
+    final currentUserId = AuthService.instance.currentUser?.id;
     final isLiked = currentUserId != null && story.likedBy.contains(currentUserId);
 
     return Row(
@@ -624,6 +645,7 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
         // Like button with count
         GestureDetector(
           onTap: _toggleLike,
+          onLongPress: _showLikes,
           child: Row(
             children: [
               Icon(
@@ -632,12 +654,15 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
                 size: 28,
               ),
               const SizedBox(width: 6),
-              Text(
-                '${story.likedBy.length}',
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 14,
-                  fontWeight: FontWeight.w500,
+              GestureDetector(
+                onTap: _showLikes,
+                child: Text(
+                  '${story.likedBy.length}',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
+                  ),
                 ),
               ),
             ],
@@ -668,6 +693,118 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
   }
 }
 
+class _StoryLikesSheet extends StatefulWidget {
+  final List<String> userIds;
+  final VoidCallback onClose;
+
+  const _StoryLikesSheet({
+    required this.userIds,
+    required this.onClose,
+  });
+
+  @override
+  State<_StoryLikesSheet> createState() => _StoryLikesSheetState();
+}
+
+class _StoryLikesSheetState extends State<_StoryLikesSheet> {
+  late Future<List<AppUser>> _future;
+
+  @override
+  void initState() {
+    super.initState();
+    _future = _loadUsers(widget.userIds);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final height = MediaQuery.of(context).size.height;
+
+    return SafeArea(
+      child: Container(
+        height: height * 0.6,
+        decoration: BoxDecoration(
+          color: theme.colorScheme.surface,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
+        ),
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+              child: Row(
+                children: [
+                  const Expanded(child: Text('Likes')),
+                  IconButton(
+                    icon: const Icon(Icons.close),
+                    onPressed: () {
+                      Navigator.of(context).pop();
+                      widget.onClose();
+                    },
+                  ),
+                ],
+              ),
+            ),
+            const Divider(height: 1),
+            Expanded(
+              child: FutureBuilder<List<AppUser>>(
+                future: _future,
+                builder: (context, snapshot) {
+                  if (snapshot.connectionState == ConnectionState.waiting) {
+                    return const Center(child: CircularProgressIndicator());
+                  }
+                  if (snapshot.hasError) {
+                    return Center(
+                      child: Text(
+                        snapshot.error.toString(),
+                        textAlign: TextAlign.center,
+                      ),
+                    );
+                  }
+                  final users = snapshot.data ?? const <AppUser>[];
+                  if (users.isEmpty) {
+                    return const Center(child: Text('No likes yet'));
+                  }
+                  return ListView.separated(
+                    itemCount: users.length,
+                    separatorBuilder: (_, __) => const Divider(height: 1),
+                    itemBuilder: (context, index) {
+                      final u = users[index];
+                      return ListTile(
+                        leading: CircleAvatar(
+                          backgroundImage:
+                              (u.photoUrl != null && u.photoUrl!.isNotEmpty)
+                                  ? NetworkImage(u.photoUrl!)
+                                  : null,
+                          child: (u.photoUrl == null || u.photoUrl!.isEmpty)
+                              ? Text(
+                                  u.username.isNotEmpty
+                                      ? u.username[0].toUpperCase()
+                                      : 'U',
+                                )
+                              : null,
+                        ),
+                        title: Text(u.username),
+                      );
+                    },
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+Future<List<AppUser>> _loadUsers(List<String> ids) async {
+  if (ids.isEmpty) return <AppUser>[];
+  final parsed = ids.map(int.parse).toList();
+  final qs = parsed.join(',');
+  final rows = await AuthService.instance.api.getListOfMaps('/api/users?ids=$qs');
+  return rows.map(AppUser.fromJson).toList();
+}
+
 class _StoryCommentsSheet extends StatefulWidget {
   final Story story;
   final VoidCallback onClose;
@@ -695,8 +832,8 @@ class _StoryCommentsSheetState extends State<_StoryCommentsSheet> {
     final text = _controller.text.trim();
     if (text.isEmpty) return;
 
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null) {
+    final me = AuthService.instance.currentUser;
+    if (me == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Please sign in to comment')),
       );
@@ -706,21 +843,10 @@ class _StoryCommentsSheetState extends State<_StoryCommentsSheet> {
     setState(() => _isSubmitting = true);
 
     try {
-      String username = user.email?.split('@').first ?? 'user';
-      final snap = await FirebaseFirestore.instance
-          .collection('users')
-          .doc(user.uid)
-          .get();
-      final data = snap.data();
-      final fromProfile = data?['username'] as String?;
-      if (fromProfile != null && fromProfile.isNotEmpty) {
-        username = fromProfile;
-      }
-
       await StoryService.instance.addComment(
         storyId: widget.story.id,
-        authorId: user.uid,
-        authorUsername: username,
+        authorId: me.id,
+        authorUsername: me.username,
         text: text,
       );
 
@@ -864,7 +990,7 @@ class _SendStorySheet extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final currentUser = FirebaseAuth.instance.currentUser;
+    final currentUser = AuthService.instance.currentUser;
 
     return SafeArea(
       child: Container(
@@ -910,10 +1036,10 @@ class _SendStorySheet extends StatelessWidget {
               )
             else
               Flexible(
-                child: StreamBuilder<List<Map<String, dynamic>>>(
-                  stream: _watchUserChats(currentUser.uid),
+                child: StreamBuilder<List<Chat>>(
+                  stream: ChatService.instance.watchMyChats(uid: currentUser.id),
                   builder: (context, snapshot) {
-                    final chats = snapshot.data ?? [];
+                    final chats = snapshot.data ?? const <Chat>[];
 
                     if (chats.isEmpty) {
                       return const Center(
@@ -926,18 +1052,29 @@ class _SendStorySheet extends StatelessWidget {
                       shrinkWrap: true,
                       itemBuilder: (context, index) {
                         final chat = chats[index];
-                        final chatId = chat['chatId'] as String;
-                        final otherName = chat['otherName'] as String;
+                        final chatId = chat.id;
+
+                        String displayName = chat.title ?? '';
+                        if (!chat.isGroup) {
+                          final otherId = chat.members.firstWhere(
+                            (id) => id != currentUser.id,
+                            orElse: () => '',
+                          );
+                          displayName = chat.memberUsernames[otherId] ?? displayName;
+                        }
+                        if (displayName.trim().isEmpty) {
+                          displayName = chat.isGroup ? 'Group chat' : 'Chat';
+                        }
 
                         return ListTile(
                           leading: CircleAvatar(
                             child: Text(
-                              otherName.isNotEmpty
-                                  ? otherName[0].toUpperCase()
+                              displayName.isNotEmpty
+                                  ? displayName[0].toUpperCase()
                                   : '?',
                             ),
                           ),
-                          title: Text(otherName),
+                          title: Text(displayName),
                           onTap: () async {
                             try {
                               // Send story as a message
@@ -947,7 +1084,7 @@ class _SendStorySheet extends StatelessWidget {
 
                               await ChatService.instance.sendText(
                                 chatId: chatId,
-                                senderId: currentUser.uid,
+                                senderId: currentUser.id,
                                 text: storyPreview,
                               );
 
@@ -955,7 +1092,7 @@ class _SendStorySheet extends StatelessWidget {
                                 Navigator.of(context).pop();
                                 ScaffoldMessenger.of(context).showSnackBar(
                                   SnackBar(
-                                    content: Text('Story sent to $otherName'),
+                                    content: Text('Story sent to $displayName'),
                                   ),
                                 );
                               }
@@ -980,46 +1117,6 @@ class _SendStorySheet extends StatelessWidget {
         ),
       ),
     );
-  }
-
-  Stream<List<Map<String, dynamic>>> _watchUserChats(String userId) {
-    return FirebaseFirestore.instance
-        .collection('chats')
-        .where('members', arrayContains: userId)
-        .orderBy('updatedAt', descending: true)
-        .limit(20)
-        .snapshots()
-        .asyncMap((snap) async {
-      final chats = <Map<String, dynamic>>[];
-
-      for (final doc in snap.docs) {
-        final data = doc.data();
-        final members = (data['members'] as List<dynamic>? ?? [])
-            .cast<String>();
-        final otherId = members.firstWhere(
-          (id) => id != userId,
-          orElse: () => '',
-        );
-
-        if (otherId.isEmpty) continue;
-
-        final userDoc = await FirebaseFirestore.instance
-            .collection('users')
-            .doc(otherId)
-            .get();
-
-        final userData = userDoc.data();
-        final name = userData?['username'] as String? ?? 'User';
-
-        chats.add({
-          'chatId': doc.id,
-          'otherUser': otherId,
-          'otherName': name,
-        });
-      }
-
-      return chats;
-    });
   }
 }
 

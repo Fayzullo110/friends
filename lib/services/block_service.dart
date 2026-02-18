@@ -1,47 +1,71 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'dart:async';
+
+import 'auth_service.dart';
 
 class BlockService {
   BlockService._();
   static final BlockService instance = BlockService._();
 
-  final _firestore = FirebaseFirestore.instance;
-
-  CollectionReference<Map<String, dynamic>> _blockedRef(String uid) =>
-      _firestore.collection('blocked').doc(uid).collection('items');
-
-  Stream<List<String>> watchBlocked({required String uid}) =>
-      _blockedRef(uid).snapshots().map(
-            (snap) => snap.docs
-                .map((d) => d.data()['userId'] as String? ?? '')
-                .where((id) => id.isNotEmpty)
-                .toList(),
-          );
+  // Polling stream until we add realtime via websockets.
+  Stream<List<String>> watchBlocked({required String uid}) async* {
+    List<String>? last;
+    while (true) {
+      final next = await getBlockedOnce(uid: uid);
+      next.sort();
+      if (last == null || !_listEquals(last, next)) {
+        last = next;
+        yield next;
+      }
+      await Future<void>.delayed(const Duration(seconds: 10));
+    }
+  }
 
   Future<List<String>> getBlockedOnce({required String uid}) async {
-    final snap = await _blockedRef(uid).get();
-    return snap.docs
-        .map((d) => d.data()['userId'] as String? ?? '')
-        .where((id) => id.isNotEmpty)
-        .toList();
+    // Backend uses JWT for identity; uid param is ignored but kept for compatibility.
+    final list = await AuthService.instance.api.getList('/api/blocks');
+    return list.map((e) => e.toString()).toList();
   }
 
   Future<void> block({required String fromUserId, required String toUserId}) async {
     if (fromUserId == toUserId) return;
-    await _blockedRef(fromUserId).doc(toUserId).set({
-      'userId': toUserId,
-      'createdAt': FieldValue.serverTimestamp(),
-    });
+    final target = int.parse(toUserId);
+    await AuthService.instance.api.postNoContent('/api/blocks/$target');
   }
 
   Future<void> unblock({required String fromUserId, required String toUserId}) async {
-    await _blockedRef(fromUserId).doc(toUserId).delete();
+    final target = int.parse(toUserId);
+    await AuthService.instance.api.deleteNoContent('/api/blocks/$target');
   }
 
   Future<bool> isBlocked({
     required String fromUserId,
     required String toUserId,
   }) async {
-    final snap = await _blockedRef(fromUserId).doc(toUserId).get();
-    return snap.exists;
+    // Supports checking:
+    // - me -> other
+    // - other -> me
+    final me = AuthService.instance.currentUser;
+    if (me == null) return false;
+
+    if (fromUserId == me.id) {
+      final target = int.parse(toUserId);
+      return await AuthService.instance.api.getBool('/api/blocks/$target/exists');
+    }
+
+    if (toUserId == me.id) {
+      final other = int.parse(fromUserId);
+      return await AuthService.instance.api.getBool('/api/blocks/by/$other/exists');
+    }
+
+    return false;
   }
+}
+
+bool _listEquals(List<String> a, List<String> b) {
+  if (identical(a, b)) return true;
+  if (a.length != b.length) return false;
+  for (var i = 0; i < a.length; i++) {
+    if (a[i] != b[i]) return false;
+  }
+  return true;
 }

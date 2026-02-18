@@ -1,5 +1,3 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
-
 class Reel {
   final String id;
   final String authorId;
@@ -13,6 +11,9 @@ class Reel {
   final int shareCount;
   final DateTime createdAt;
 
+  final DateTime? archivedAt;
+  final DateTime? deletedAt;
+
   Reel({
     required this.id,
     required this.authorId,
@@ -25,30 +26,46 @@ class Reel {
     this.commentCount = 0,
     this.shareCount = 0,
     required this.createdAt,
+    this.archivedAt,
+    this.deletedAt,
   });
 
-  factory Reel.fromDoc(DocumentSnapshot<Map<String, dynamic>> doc) {
-    final data = doc.data() ?? <String, dynamic>{};
+  factory Reel.fromJson(Map<String, dynamic> data) {
     return Reel(
-      id: doc.id,
-      authorId: data['authorId'] as String? ?? '',
+      id: data['id'].toString(),
+      authorId: data['authorId'].toString(),
       authorUsername: data['authorUsername'] as String? ?? '',
       caption: data['caption'] as String? ?? '',
       mediaUrl: data['mediaUrl'] as String?,
       mediaType: data['mediaType'] as String? ?? 'video',
-      likeCount: data['likeCount'] as int? ?? 0,
+      likeCount: (data['likeCount'] as num?)?.toInt() ?? 0,
       likedBy: (data['likedBy'] as List<dynamic>? ?? const [])
-          .map((e) => e as String)
+          .map((e) => e.toString())
           .toList(),
-      commentCount: data['commentCount'] as int? ?? 0,
-      shareCount: data['shareCount'] as int? ?? 0,
-      createdAt:
-          (data['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
+      commentCount: (data['commentCount'] as num?)?.toInt() ?? 0,
+      shareCount: (data['shareCount'] as num?)?.toInt() ?? 0,
+      createdAt: DateTime.fromMillisecondsSinceEpoch(
+        (data['createdAt'] as num?)?.toInt() ?? 0,
+        isUtc: false,
+      ),
+      archivedAt: data['archivedAt'] != null
+          ? DateTime.fromMillisecondsSinceEpoch(
+              (data['archivedAt'] as num).toInt(),
+              isUtc: false,
+            )
+          : null,
+      deletedAt: data['deletedAt'] != null
+          ? DateTime.fromMillisecondsSinceEpoch(
+              (data['deletedAt'] as num).toInt(),
+              isUtc: false,
+            )
+          : null,
     );
   }
 
-  Map<String, dynamic> toMap() {
+  Map<String, dynamic> toJson() {
     return {
+      'id': id,
       'authorId': authorId,
       'authorUsername': authorUsername,
       'caption': caption,
@@ -58,7 +75,9 @@ class Reel {
       'likedBy': likedBy,
       'commentCount': commentCount,
       'shareCount': shareCount,
-      'createdAt': Timestamp.fromDate(createdAt),
+      'createdAt': createdAt.millisecondsSinceEpoch,
+      'archivedAt': archivedAt?.millisecondsSinceEpoch,
+      'deletedAt': deletedAt?.millisecondsSinceEpoch,
     };
   }
 }

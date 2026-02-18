@@ -1,5 +1,3 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 import '../../models/app_user.dart';
@@ -11,7 +9,7 @@ class BlockedUsersScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final current = FirebaseAuth.instance.currentUser;
+    final AppUser? current = AuthService.instance.currentUser;
     if (current == null) {
       return Scaffold(
         appBar: AppBar(
@@ -28,7 +26,7 @@ class BlockedUsersScreen extends StatelessWidget {
         title: const Text('Blocked users'),
       ),
       body: StreamBuilder<List<String>>(
-        stream: BlockService.instance.watchBlocked(uid: current.uid),
+        stream: BlockService.instance.watchBlocked(uid: current.id),
         builder: (context, snapshot) {
           final ids = snapshot.data ?? const [];
 
@@ -42,21 +40,19 @@ class BlockedUsersScreen extends StatelessWidget {
             );
           }
 
-          // Firestore whereIn is limited to 10 elements; for simplicity we
-          // fetch all users and filter client-side when list is small.
-          return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-            stream: FirebaseFirestore.instance.collection('users').snapshots(),
-            builder: (context, userSnap) {
-              if (userSnap.connectionState == ConnectionState.waiting) {
+          return FutureBuilder<List<AppUser>>(
+            future: () async {
+              final joined = ids.join(',');
+              final rows = await AuthService.instance.api
+                  .getListOfMaps('/api/users?ids=$joined');
+              return rows.map(AppUser.fromJson).toList();
+            }(),
+            builder: (context, usersSnap) {
+              if (usersSnap.connectionState == ConnectionState.waiting) {
                 return const Center(child: CircularProgressIndicator());
               }
 
-              final docs = userSnap.data?.docs ?? [];
-              final blocked = docs
-                  .where((d) => ids.contains(d.id))
-                  .map(AppUser.fromDoc)
-                  .toList();
-
+              final blocked = usersSnap.data ?? const <AppUser>[];
               if (blocked.isEmpty) {
                 return const Center(
                   child: Text('You have not blocked anyone.'),
@@ -80,11 +76,8 @@ class BlockedUsersScreen extends StatelessWidget {
                     subtitle: Text(user.email),
                     trailing: TextButton(
                       onPressed: () async {
-                        final me = await AuthService.instance.userChanges
-                            .firstWhere((u) => u != null);
-                        if (me == null) return;
                         await BlockService.instance.unblock(
-                          fromUserId: me.id,
+                          fromUserId: current.id,
                           toUserId: user.id,
                         );
                       },

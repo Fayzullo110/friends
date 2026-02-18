@@ -1,17 +1,15 @@
-import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
-
-import 'firebase_options.dart';
 import 'features/auth/auth_gate.dart';
 import 'l10n/app_localizations.dart';
+import 'services/auth_service.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await Firebase.initializeApp(
-    options: DefaultFirebaseOptions.currentPlatform,
-  );
-
+  // Initialize AuthService with backend URL
+  AuthService.instance.init(baseUrl: 'http://localhost:8080');
+  // Try to restore session from stored JWT
+  await AuthService.instance.initFromStoredToken();
   runApp(const FriendsApp());
 }
 
@@ -24,9 +22,17 @@ class FriendsApp extends StatelessWidget {
       seedColor: Colors.blueAccent,
       brightness: Brightness.light,
     );
-    final ColorScheme darkScheme = ColorScheme.fromSeed(
-      seedColor: Colors.blueAccent,
-      brightness: Brightness.dark,
+    const ColorScheme darkScheme = ColorScheme.dark(
+      primary: Colors.white,
+      onPrimary: Colors.black,
+      secondary: Colors.white70,
+      onSecondary: Colors.black,
+      surface: Color(0xFF121212),
+      onSurface: Colors.white,
+      background: Colors.black,
+      onBackground: Colors.white,
+      error: Color(0xFFCF6679),
+      onError: Colors.black,
     );
 
     return MaterialApp(
@@ -51,6 +57,7 @@ class FriendsApp extends StatelessWidget {
       darkTheme: ThemeData(
         colorScheme: darkScheme,
         useMaterial3: true,
+        scaffoldBackgroundColor: Colors.black,
       ),
       home: const AuthGate(),
     );

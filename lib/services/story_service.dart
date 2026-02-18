@@ -1,54 +1,68 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'dart:async';
 
 import '../models/story.dart';
 import '../models/story_comment.dart';
+import 'auth_service.dart';
 
 class StoryService {
   StoryService._();
 
   static final StoryService instance = StoryService._();
 
-  final _storiesRef = FirebaseFirestore.instance
-      .collection('stories')
-      .withConverter<Story>(
-        fromFirestore: (doc, _) => Story.fromDoc(doc),
-        toFirestore: (story, _) => story.toMap(),
-      );
-
-  final _commentsRef = FirebaseFirestore.instance
-      .collection('storyComments')
-      .withConverter<StoryComment>(
-        fromFirestore: (doc, _) => StoryComment.fromDoc(doc),
-        toFirestore: (comment, _) => comment.toMap(),
-      );
-
   /// Watch all non-expired stories ordered by creation time.
   Stream<List<Story>> watchActiveStories() {
-    final now = DateTime.now();
-    return _storiesRef
-        .where('expiresAt', isGreaterThan: Timestamp.fromDate(now))
-        .orderBy('expiresAt')
-        .orderBy('createdAt', descending: true)
-        .snapshots()
-        .map((snap) => snap.docs.map((d) => d.data()).toList())
-        .handleError((error, stackTrace) {
-      // Keep UI alive if Firestore is temporarily unavailable.
-    });
+    final controller = StreamController<List<Story>>();
+    List<Story>? last;
+
+    Future<void> tick() async {
+      try {
+        final rows = await AuthService.instance.api.getListOfMaps('/api/stories');
+        final next = rows.map(Story.fromJson).toList();
+        if (last == null || !_storiesEqual(last!, next)) {
+          last = next;
+          controller.add(next);
+        }
+      } catch (_) {
+        // swallow errors
+      }
+    }
+
+    tick();
+    final timer = Timer.periodic(const Duration(seconds: 12), (_) => tick());
+    controller.onCancel = () {
+      timer.cancel();
+      controller.close();
+    };
+    return controller.stream;
   }
 
   /// Watch all non-expired stories for a single author.
   Stream<List<Story>> watchUserStories({required String authorId}) {
-    final now = DateTime.now();
-    return _storiesRef
-        .where('authorId', isEqualTo: authorId)
-        .where('expiresAt', isGreaterThan: Timestamp.fromDate(now))
-        .orderBy('expiresAt')
-        .orderBy('createdAt', descending: true)
-        .snapshots()
-        .map((snap) => snap.docs.map((d) => d.data()).toList())
-        .handleError((error, stackTrace) {
-      // Keep UI alive if Firestore is temporarily unavailable.
-    });
+    final controller = StreamController<List<Story>>();
+    List<Story>? last;
+
+    Future<void> tick() async {
+      try {
+        final id = int.parse(authorId);
+        final rows = await AuthService.instance.api
+            .getListOfMaps('/api/stories/user/$id');
+        final next = rows.map(Story.fromJson).toList();
+        if (last == null || !_storiesEqual(last!, next)) {
+          last = next;
+          controller.add(next);
+        }
+      } catch (_) {
+        // swallow
+      }
+    }
+
+    tick();
+    final timer = Timer.periodic(const Duration(seconds: 12), (_) => tick());
+    controller.onCancel = () {
+      timer.cancel();
+      controller.close();
+    };
+    return controller.stream;
   }
 
   Future<void> createTextStory({
@@ -59,25 +73,16 @@ class StoryService {
     String? musicArtist,
     String? musicUrl,
   }) async {
-    final now = DateTime.now();
-    final expiresAt = now.add(const Duration(hours: 24));
-
-    final story = Story(
-      id: '',
-      authorId: authorId,
-      authorUsername: authorUsername,
-      mediaUrl: null,
-      mediaType: 'text',
-      text: text,
-      createdAt: now,
-      expiresAt: expiresAt,
-      seenBy: const [],
-      musicTitle: musicTitle,
-      musicArtist: musicArtist,
-      musicUrl: musicUrl,
+    await AuthService.instance.api.postNoContent(
+      '/api/stories',
+      body: {
+        'mediaType': 'text',
+        'text': text,
+        'musicTitle': musicTitle,
+        'musicArtist': musicArtist,
+        'musicUrl': musicUrl,
+      },
     );
-
-    await _storiesRef.add(story);
   }
 
   Future<void> createMediaStory({
@@ -90,52 +95,24 @@ class StoryService {
     String? musicArtist,
     String? musicUrl,
   }) async {
-    final now = DateTime.now();
-    final expiresAt = now.add(const Duration(hours: 24));
-
-    final story = Story(
-      id: '',
-      authorId: authorId,
-      authorUsername: authorUsername,
-      mediaUrl: mediaUrl,
-      mediaType: mediaType,
-      text: text,
-      createdAt: now,
-      expiresAt: expiresAt,
-      seenBy: const [],
-      musicTitle: musicTitle,
-      musicArtist: musicArtist,
-      musicUrl: musicUrl,
+    await AuthService.instance.api.postNoContent(
+      '/api/stories',
+      body: {
+        'mediaUrl': mediaUrl,
+        'mediaType': mediaType,
+        'text': text,
+        'musicTitle': musicTitle,
+        'musicArtist': musicArtist,
+        'musicUrl': musicUrl,
+      },
     );
-
-    await _storiesRef.add(story);
   }
 
   Future<void> markSeen({
     required String storyId,
     required String userId,
   }) async {
-    final docRef = _storiesRef.doc(storyId).withConverter(
-          fromFirestore: (doc, _) => Story.fromDoc(doc),
-          toFirestore: (story, _) => story.toMap(),
-        );
-
-    await FirebaseFirestore.instance.runTransaction((tx) async {
-      final snap = await tx.get(docRef);
-      if (!snap.exists) return;
-      final story = snap.data();
-      if (story == null) return;
-
-      if (story.seenBy.contains(userId)) {
-        return;
-      }
-
-      final updatedSeenBy = List<String>.from(story.seenBy)..add(userId);
-
-      tx.update(docRef, {
-        'seenBy': updatedSeenBy,
-      });
-    });
+    await AuthService.instance.api.postNoContent('/api/stories/$storyId/seen');
   }
 
   /// Toggle like on a story (like if not liked, unlike if already liked)
@@ -143,35 +120,35 @@ class StoryService {
     required String storyId,
     required String userId,
   }) async {
-    final docRef = _storiesRef.doc(storyId);
-
-    await FirebaseFirestore.instance.runTransaction((tx) async {
-      final snap = await tx.get(docRef);
-      if (!snap.exists) return;
-      final story = snap.data();
-      if (story == null) return;
-
-      final currentLikedBy = List<String>.from(story.likedBy);
-      if (currentLikedBy.contains(userId)) {
-        currentLikedBy.remove(userId);
-      } else {
-        currentLikedBy.add(userId);
-      }
-
-      tx.update(docRef, {'likedBy': currentLikedBy});
-    });
+    await AuthService.instance.api.postNoContent('/api/stories/$storyId/like');
   }
 
   /// Watch comments for a specific story
   Stream<List<StoryComment>> watchStoryComments({required String storyId}) {
-    return _commentsRef
-        .where('storyId', isEqualTo: storyId)
-        .orderBy('createdAt', descending: true)
-        .snapshots()
-        .map((snap) => snap.docs.map((d) => d.data()).toList())
-        .handleError((error, stackTrace) {
-      // Keep UI alive if Firestore is temporarily unavailable
-    });
+    final controller = StreamController<List<StoryComment>>();
+    List<StoryComment>? last;
+
+    Future<void> tick() async {
+      try {
+        final rows = await AuthService.instance.api
+            .getListOfMaps('/api/stories/$storyId/comments');
+        final next = rows.map(StoryComment.fromJson).toList();
+        if (last == null || !_storyCommentsEqual(last!, next)) {
+          last = next;
+          controller.add(next);
+        }
+      } catch (_) {
+        // swallow
+      }
+    }
+
+    tick();
+    final timer = Timer.periodic(const Duration(seconds: 8), (_) => tick());
+    controller.onCancel = () {
+      timer.cancel();
+      controller.close();
+    };
+    return controller.stream;
   }
 
   /// Add a comment to a story
@@ -181,34 +158,50 @@ class StoryService {
     required String authorUsername,
     required String text,
   }) async {
-    final comment = StoryComment(
-      id: '',
-      storyId: storyId,
-      authorId: authorId,
-      authorUsername: authorUsername,
-      text: text.trim(),
-      createdAt: DateTime.now(),
+    final trimmed = text.trim();
+    if (trimmed.isEmpty) return;
+    await AuthService.instance.api.postNoContent(
+      '/api/stories/$storyId/comments',
+      body: {'text': trimmed},
     );
-
-    await _commentsRef.add(comment);
   }
 
   /// Delete a comment (only the author can delete)
   Future<void> deleteComment({
+    required String storyId,
     required String commentId,
     required String userId,
   }) async {
-    final docRef = _commentsRef.doc(commentId);
-    final snap = await docRef.get();
-    if (!snap.exists) return;
+    await AuthService.instance.api
+        .deleteNoContent('/api/stories/$storyId/comments/$commentId');
+  }
 
-    final comment = snap.data();
-    if (comment == null) return;
-
-    if (comment.authorId != userId) {
-      throw Exception('Only the author can delete this comment');
+  bool _storiesEqual(List<Story> a, List<Story> b) {
+    if (identical(a, b)) return true;
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      final sa = a[i];
+      final sb = b[i];
+      if (sa.id != sb.id) return false;
+      if (sa.mediaUrl != sb.mediaUrl) return false;
+      if (sa.mediaType != sb.mediaType) return false;
+      if (sa.text != sb.text) return false;
+      if (sa.likedBy.length != sb.likedBy.length) return false;
+      if (sa.seenBy.length != sb.seenBy.length) return false;
     }
+    return true;
+  }
 
-    await docRef.delete();
+  bool _storyCommentsEqual(List<StoryComment> a, List<StoryComment> b) {
+    if (identical(a, b)) return true;
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      final ca = a[i];
+      final cb = b[i];
+      if (ca.id != cb.id) return false;
+      if (ca.text != cb.text) return false;
+      if (ca.createdAt != cb.createdAt) return false;
+    }
+    return true;
   }
 }

@@ -1,20 +1,32 @@
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 
 import '../../models/app_notification.dart';
+import '../../models/app_user.dart';
 import '../../models/comment.dart';
 import '../../models/reel.dart';
 import '../../services/block_service.dart';
 import '../../services/comment_service.dart';
 import '../../services/notification_service.dart';
 import '../../services/reel_service.dart';
+import '../../services/auth_service.dart';
 import '../../theme/ios_icons.dart';
 import '../chat/gif_picker_sheet.dart';
 import '../chat/video_player_screen.dart';
 
 class ReelsScreen extends StatelessWidget {
-  const ReelsScreen({super.key});
+  final String? initialReelId;
+
+  const ReelsScreen({
+    super.key,
+    this.initialReelId,
+  });
+
+  int _initialIndexFor(List<Reel> reels) {
+    final id = initialReelId;
+    if (id == null || id.isEmpty) return 0;
+    final idx = reels.indexWhere((r) => r.id == id);
+    return idx >= 0 ? idx : 0;
+  }
 
   Future<List<Reel>> _filterReelsForBlocks({
     required List<Reel> reels,
@@ -58,8 +70,8 @@ class ReelsScreen extends StatelessWidget {
         builder: (context, snapshot) {
           final allReels = snapshot.data ?? const <Reel>[];
 
-          final user = FirebaseAuth.instance.currentUser;
-          if (user == null) {
+          final me = AuthService.instance.currentUser;
+          if (me == null) {
             // Logged out: show everything.
             if (allReels.isEmpty) {
               return const Center(
@@ -70,7 +82,9 @@ class ReelsScreen extends StatelessWidget {
               );
             }
 
+            final initialIndex = _initialIndexFor(allReels);
             return PageView.builder(
+              controller: PageController(initialPage: initialIndex),
               scrollDirection: Axis.vertical,
               itemCount: allReels.length,
               itemBuilder: (context, index) {
@@ -83,7 +97,7 @@ class ReelsScreen extends StatelessWidget {
           return FutureBuilder<List<Reel>>(
             future: _filterReelsForBlocks(
               reels: allReels,
-              currentUserId: user.uid,
+              currentUserId: me.id,
             ),
             builder: (context, filteredSnap) {
               if (filteredSnap.connectionState == ConnectionState.waiting) {
@@ -107,7 +121,9 @@ class ReelsScreen extends StatelessWidget {
                 );
               }
 
+              final initialIndex = _initialIndexFor(reels);
               return PageView.builder(
+                controller: PageController(initialPage: initialIndex),
                 scrollDirection: Axis.vertical,
                 itemCount: reels.length,
                 itemBuilder: (context, index) {
@@ -146,8 +162,8 @@ class _ReelCommentsSheetState extends State<_ReelCommentsSheet> {
   }
 
   Future<void> _submit() async {
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null) {
+    final me = AuthService.instance.currentUser;
+    if (me == null) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Please log in to comment.')),
@@ -162,25 +178,20 @@ class _ReelCommentsSheetState extends State<_ReelCommentsSheet> {
     try {
       await CommentService.instance.addReelComment(
         reelId: widget.reelId,
-        authorId: user.uid,
-        authorUsername: user.email ?? 'user',
+        authorId: me.id,
+        authorUsername: me.email,
         text: trimmed,
       );
 
       await NotificationService.instance.createNotification(
         toUserId: widget.reelAuthorId,
         type: AppNotificationType.comment,
-        fromUserId: user.uid,
-        fromUsername: user.email ?? 'user',
+        fromUserId: me.id,
+        fromUsername: me.email,
         postId: widget.reelId,
       );
 
       _controller.clear();
-    } on FirebaseException catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(e.message ?? e.code)),
-      );
     } catch (_) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -190,8 +201,8 @@ class _ReelCommentsSheetState extends State<_ReelCommentsSheet> {
   }
 
   Future<void> _sendGif(String gifUrl) async {
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null) {
+    final me = AuthService.instance.currentUser;
+    if (me == null) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Please log in to comment.')),
@@ -202,22 +213,17 @@ class _ReelCommentsSheetState extends State<_ReelCommentsSheet> {
     try {
       await CommentService.instance.addReelGifComment(
         reelId: widget.reelId,
-        authorId: user.uid,
-        authorUsername: user.email ?? 'user',
+        authorId: me.id,
+        authorUsername: me.email,
         gifUrl: gifUrl,
       );
 
       await NotificationService.instance.createNotification(
         toUserId: widget.reelAuthorId,
         type: AppNotificationType.comment,
-        fromUserId: user.uid,
-        fromUsername: user.email ?? 'user',
+        fromUserId: me.id,
+        fromUsername: me.email,
         postId: widget.reelId,
-      );
-    } on FirebaseException catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(e.message ?? e.code)),
       );
     } catch (_) {
       if (!mounted) return;
@@ -283,18 +289,13 @@ class _ReelCommentsSheetState extends State<_ReelCommentsSheet> {
                             return Row(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                FutureBuilder<
-                                    DocumentSnapshot<Map<String, dynamic>>>(
-                                  future: FirebaseFirestore.instance
-                                      .collection('users')
-                                      .doc(c.authorId)
-                                      .get(),
+                                FutureBuilder<AppUser>(
+                                  future: AuthService.instance.api.getJson(
+                                    '/api/users/${c.authorId}',
+                                    (json) => AppUser.fromJson(json),
+                                  ),
                                   builder: (context, snap) {
-                                    String? photoUrl;
-                                    if (snap.hasData && snap.data!.exists) {
-                                      final data = snap.data!.data();
-                                      photoUrl = data?['photoUrl'] as String?;
-                                    }
+                                    final photoUrl = snap.data?.photoUrl;
                                     return CircleAvatar(
                                       radius: 16,
                                       backgroundColor: theme
@@ -461,13 +462,91 @@ class _ReelPage extends StatelessWidget {
 
   const _ReelPage({required this.reel});
 
+  Future<void> _editCaption(BuildContext context) async {
+    final controller = TextEditingController(text: reel.caption);
+    try {
+      final ok = await showDialog<bool>(
+        context: context,
+        builder: (ctx) {
+          return AlertDialog(
+            title: const Text('Edit reel'),
+            content: TextField(
+              controller: controller,
+              maxLines: 4,
+              decoration: const InputDecoration(
+                border: OutlineInputBorder(),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(ctx).pop(false),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.of(ctx).pop(true),
+                child: const Text('Save'),
+              ),
+            ],
+          );
+        },
+      );
+      if (ok != true) return;
+      await ReelService.instance.updateReel(
+        reelId: reel.id,
+        caption: controller.text,
+      );
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Reel updated')),
+      );
+    } finally {
+      controller.dispose();
+    }
+  }
+
+  Future<void> _archive(BuildContext context) async {
+    await ReelService.instance.archiveReel(reelId: reel.id);
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Reel archived')),
+    );
+  }
+
+  Future<void> _delete(BuildContext context) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) {
+        return AlertDialog(
+          title: const Text('Delete reel?'),
+          content: const Text('This will remove the reel from your feed.'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(ctx).pop(true),
+              child: const Text('Delete'),
+            ),
+          ],
+        );
+      },
+    );
+    if (confirm != true) return;
+    await ReelService.instance.deleteReel(reelId: reel.id);
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Reel deleted')),
+    );
+  }
+
   Future<void> _toggleLike() async {
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null) return;
+    final me = AuthService.instance.currentUser;
+    if (me == null) return;
 
     await ReelService.instance.toggleLike(
       reelId: reel.id,
-      userId: user.uid,
+      userId: me.id,
     );
   }
 
@@ -486,6 +565,9 @@ class _ReelPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+
+    final currentUserId = AuthService.instance.currentUser?.id;
+    final isOwner = currentUserId != null && currentUserId == reel.authorId;
 
     return GestureDetector(
       onDoubleTap: _toggleLike,
@@ -578,6 +660,36 @@ class _ReelPage extends StatelessWidget {
                     icon:
                         const Icon(IOSIcons.camera, color: Colors.white),
                   ),
+                  if (isOwner)
+                    PopupMenuButton<String>(
+                      icon: const Icon(IOSIcons.more, color: Colors.white),
+                      onSelected: (value) async {
+                        try {
+                          if (value == 'edit') await _editCaption(context);
+                          if (value == 'archive') await _archive(context);
+                          if (value == 'delete') await _delete(context);
+                        } catch (_) {
+                          if (!context.mounted) return;
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(content: Text('Action failed')),
+                          );
+                        }
+                      },
+                      itemBuilder: (_) => const [
+                        PopupMenuItem(
+                          value: 'edit',
+                          child: Text('Edit'),
+                        ),
+                        PopupMenuItem(
+                          value: 'archive',
+                          child: Text('Archive'),
+                        ),
+                        PopupMenuItem(
+                          value: 'delete',
+                          child: Text('Delete'),
+                        ),
+                      ],
+                    ),
                 ],
               ),
             ),
@@ -591,7 +703,7 @@ class _ReelPage extends StatelessWidget {
             children: [
               Builder(builder: (context) {
                 final currentUserId =
-                    FirebaseAuth.instance.currentUser?.uid;
+                    AuthService.instance.currentUser?.id;
                 final isLiked = currentUserId != null &&
                     reel.likedBy.contains(currentUserId);
                 return _ReelActionButton(
@@ -617,14 +729,13 @@ class _ReelPage extends StatelessWidget {
                 icon: IOSIcons.shareUp,
                 label: _formatCount(reel.shareCount),
                 onTap: () async {
-                  final user = FirebaseAuth.instance.currentUser;
-                  if (user == null) return;
+                  final me = AuthService.instance.currentUser;
+                  if (me == null) return;
 
                   await ReelService.instance.repost(
                     sourceReelId: reel.id,
-                    newAuthorId: user.uid,
-                    newAuthorUsername:
-                        user.email ?? user.displayName ?? 'user',
+                    newAuthorId: me.id,
+                    newAuthorUsername: me.email,
                   );
                 },
               ),

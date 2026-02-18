@@ -1,38 +1,38 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'dart:async';
 
 import '../models/comment.dart';
+import 'auth_service.dart';
 
 class CommentService {
   CommentService._();
 
   static final CommentService instance = CommentService._();
 
-  CollectionReference<Map<String, dynamic>> _commentsRef(String postId) {
-    return FirebaseFirestore.instance
-        .collection('posts')
-        .doc(postId)
-        .collection('comments');
-  }
-
-  CollectionReference<Map<String, dynamic>> _reelCommentsRef(String reelId) {
-    return FirebaseFirestore.instance
-        .collection('reels')
-        .doc(reelId)
-        .collection('comments');
-  }
-
   Stream<List<Comment>> watchComments({required String postId}) {
-    return _commentsRef(postId)
-        .orderBy('createdAt', descending: false)
-        .snapshots()
-        .map(
-          (snap) => snap.docs
-              .map((d) => Comment.fromDoc(d, postId: postId))
-              .toList(),
-        )
-        .handleError((error, stackTrace) {
-      // Keep UI alive if Firestore is temporarily unavailable.
-    });
+    final controller = StreamController<List<Comment>>();
+    List<Comment>? last;
+
+    Future<void> tick() async {
+      try {
+        final rows = await AuthService.instance.api
+            .getListOfMaps('/api/posts/$postId/comments');
+        final next = rows.map(Comment.fromJson).toList();
+        if (last == null || !_commentsEqual(last!, next)) {
+          last = next;
+          controller.add(next);
+        }
+      } catch (_) {
+        // swallow errors
+      }
+    }
+
+    tick();
+    final timer = Timer.periodic(const Duration(seconds: 8), (_) => tick());
+    controller.onCancel = () {
+      timer.cancel();
+      controller.close();
+    };
+    return controller.stream;
   }
 
   Future<void> addComment({
@@ -45,52 +45,41 @@ class CommentService {
     final trimmed = text.trim();
     if (trimmed.isEmpty) return;
 
-    final comment = Comment(
-      id: '',
-      postId: postId,
-      authorId: authorId,
-      authorUsername: authorUsername,
-      text: trimmed,
-      type: CommentType.text,
-      mediaUrl: null,
-      createdAt: DateTime.now(),
-      likeCount: 0,
-      likedBy: const [],
-      parentCommentId: parentCommentId,
-      dislikeCount: 0,
-      dislikedBy: const [],
+    await AuthService.instance.api.postNoContent(
+      '/api/posts/$postId/comments',
+      body: {
+        'text': trimmed,
+        'type': 'text',
+        'parentCommentId': parentCommentId,
+      },
     );
-
-    try {
-      await _commentsRef(postId).add(comment.toMap());
-
-      // Increment the post's commentCount for quick display.
-      await FirebaseFirestore.instance
-          .collection('posts')
-          .doc(postId)
-          .update({
-        'commentCount': FieldValue.increment(1),
-      });
-    } on FirebaseException catch (e) {
-      if (e.code == 'unavailable') {
-        return;
-      }
-      rethrow;
-    }
   }
 
   Stream<List<Comment>> watchReelComments({required String reelId}) {
-    return _reelCommentsRef(reelId)
-        .orderBy('createdAt', descending: false)
-        .snapshots()
-        .map(
-          (snap) => snap.docs
-              .map((d) => Comment.fromDoc(d, postId: reelId))
-              .toList(),
-        )
-        .handleError((error, stackTrace) {
-      // Keep UI alive if Firestore is temporarily unavailable.
-    });
+    final controller = StreamController<List<Comment>>();
+    List<Comment>? last;
+
+    Future<void> tick() async {
+      try {
+        final rows = await AuthService.instance.api
+            .getListOfMaps('/api/reels/$reelId/comments');
+        final next = rows.map(_reelCommentFromJson).toList();
+        if (last == null || !_commentsEqual(last!, next)) {
+          last = next;
+          controller.add(next);
+        }
+      } catch (_) {
+        // swallow errors
+      }
+    }
+
+    tick();
+    final timer = Timer.periodic(const Duration(seconds: 8), (_) => tick());
+    controller.onCancel = () {
+      timer.cancel();
+      controller.close();
+    };
+    return controller.stream;
   }
 
   Future<void> addReelComment({
@@ -102,38 +91,13 @@ class CommentService {
     final trimmed = text.trim();
     if (trimmed.isEmpty) return;
 
-    final comment = Comment(
-      id: '',
-      postId: reelId,
-      authorId: authorId,
-      authorUsername: authorUsername,
-      text: trimmed,
-      type: CommentType.text,
-      mediaUrl: null,
-      createdAt: DateTime.now(),
-      likeCount: 0,
-      likedBy: const [],
-      parentCommentId: null,
-      dislikeCount: 0,
-      dislikedBy: const [],
+    await AuthService.instance.api.postNoContent(
+      '/api/reels/$reelId/comments',
+      body: {
+        'text': trimmed,
+        'type': 'text',
+      },
     );
-
-    try {
-      await _reelCommentsRef(reelId).add(comment.toMap());
-
-      // Increment the reel's commentCount for quick display.
-      await FirebaseFirestore.instance
-          .collection('reels')
-          .doc(reelId)
-          .update({
-        'commentCount': FieldValue.increment(1),
-      });
-    } on FirebaseException catch (e) {
-      if (e.code == 'unavailable') {
-        return;
-      }
-      rethrow;
-    }
   }
 
   Future<void> addReelGifComment({
@@ -144,37 +108,57 @@ class CommentService {
   }) async {
     if (gifUrl.isEmpty) return;
 
-    final comment = Comment(
-      id: '',
-      postId: reelId,
-      authorId: authorId,
-      authorUsername: authorUsername,
-      text: '',
-      type: CommentType.gif,
-      mediaUrl: gifUrl,
-      createdAt: DateTime.now(),
-      likeCount: 0,
-      likedBy: const [],
-      parentCommentId: null,
-      dislikeCount: 0,
-      dislikedBy: const [],
+    await AuthService.instance.api.postNoContent(
+      '/api/reels/$reelId/comments',
+      body: {
+        'text': '',
+        'type': 'gif',
+        'mediaUrl': gifUrl,
+      },
     );
+  }
 
-    try {
-      await _reelCommentsRef(reelId).add(comment.toMap());
+  Future<void> toggleLikeReelComment({
+    required String reelId,
+    required String commentId,
+    required String userId,
+  }) async {
+    await AuthService.instance.api
+        .postNoContent('/api/reels/$reelId/comments/$commentId/like');
+  }
 
-      await FirebaseFirestore.instance
-          .collection('reels')
-          .doc(reelId)
-          .update({
-        'commentCount': FieldValue.increment(1),
-      });
-    } on FirebaseException catch (e) {
-      if (e.code == 'unavailable') {
-        return;
-      }
-      rethrow;
-    }
+  Future<void> toggleDislikeReelComment({
+    required String reelId,
+    required String commentId,
+    required String userId,
+  }) async {
+    await AuthService.instance.api
+        .postNoContent('/api/reels/$reelId/comments/$commentId/dislike');
+  }
+
+  Comment _reelCommentFromJson(Map<String, dynamic> data) {
+    return Comment(
+      id: data['id'].toString(),
+      postId: data['reelId'].toString(),
+      authorId: data['authorId'].toString(),
+      authorUsername: data['authorUsername'] as String? ?? '',
+      text: data['text'] as String? ?? '',
+      type: (data['type'] as String?) == 'gif' ? CommentType.gif : CommentType.text,
+      mediaUrl: data['mediaUrl'] as String?,
+      createdAt: DateTime.fromMillisecondsSinceEpoch(
+        (data['createdAt'] as num?)?.toInt() ?? 0,
+        isUtc: false,
+      ),
+      likeCount: (data['likeCount'] as num?)?.toInt() ?? 0,
+      likedBy: (data['likedBy'] as List<dynamic>? ?? const [])
+          .map((e) => e.toString())
+          .toList(),
+      parentCommentId: null,
+      dislikeCount: (data['dislikeCount'] as num?)?.toInt() ?? 0,
+      dislikedBy: (data['dislikedBy'] as List<dynamic>? ?? const [])
+          .map((e) => e.toString())
+          .toList(),
+    );
   }
 
   Future<void> addGifComment({
@@ -186,38 +170,15 @@ class CommentService {
   }) async {
     if (gifUrl.isEmpty) return;
 
-    final comment = Comment(
-      id: '',
-      postId: postId,
-      authorId: authorId,
-      authorUsername: authorUsername,
-      text: '',
-      type: CommentType.gif,
-      mediaUrl: gifUrl,
-      createdAt: DateTime.now(),
-      likeCount: 0,
-      likedBy: const [],
-      parentCommentId: parentCommentId,
-      dislikeCount: 0,
-      dislikedBy: const [],
+    await AuthService.instance.api.postNoContent(
+      '/api/posts/$postId/comments',
+      body: {
+        'text': '',
+        'type': 'gif',
+        'mediaUrl': gifUrl,
+        'parentCommentId': parentCommentId,
+      },
     );
-
-    try {
-      await _commentsRef(postId).add(comment.toMap());
-
-      // Increment the post's commentCount for quick display.
-      await FirebaseFirestore.instance
-          .collection('posts')
-          .doc(postId)
-          .update({
-        'commentCount': FieldValue.increment(1),
-      });
-    } on FirebaseException catch (e) {
-      if (e.code == 'unavailable') {
-        return;
-      }
-      rethrow;
-    }
   }
 
   Future<void> toggleLikeComment({
@@ -225,29 +186,8 @@ class CommentService {
     required String commentId,
     required String userId,
   }) async {
-    final ref = _commentsRef(postId).doc(commentId);
-
-    await FirebaseFirestore.instance.runTransaction((tx) async {
-      final snap = await tx.get(ref);
-      if (!snap.exists) return;
-
-      final data = snap.data() ?? {};
-      final likedBy = List<String>.from(data['likedBy'] as List<dynamic>? ?? []);
-      var likeCount = data['likeCount'] as int? ?? 0;
-
-      if (likedBy.contains(userId)) {
-        likedBy.remove(userId);
-        likeCount = likeCount > 0 ? likeCount - 1 : 0;
-      } else {
-        likedBy.add(userId);
-        likeCount += 1;
-      }
-
-      tx.update(ref, {
-        'likedBy': likedBy,
-        'likeCount': likeCount,
-      });
-    });
+    await AuthService.instance.api
+        .postNoContent('/api/posts/$postId/comments/$commentId/like');
   }
 
   Future<void> toggleDislikeComment({
@@ -255,29 +195,23 @@ class CommentService {
     required String commentId,
     required String userId,
   }) async {
-    final ref = _commentsRef(postId).doc(commentId);
+    await AuthService.instance.api
+        .postNoContent('/api/posts/$postId/comments/$commentId/dislike');
+  }
 
-    await FirebaseFirestore.instance.runTransaction((tx) async {
-      final snap = await tx.get(ref);
-      if (!snap.exists) return;
-
-      final data = snap.data() ?? {};
-      final dislikedBy =
-          List<String>.from(data['dislikedBy'] as List<dynamic>? ?? []);
-      var dislikeCount = data['dislikeCount'] as int? ?? 0;
-
-      if (dislikedBy.contains(userId)) {
-        dislikedBy.remove(userId);
-        dislikeCount = dislikeCount > 0 ? dislikeCount - 1 : 0;
-      } else {
-        dislikedBy.add(userId);
-        dislikeCount += 1;
-      }
-
-      tx.update(ref, {
-        'dislikedBy': dislikedBy,
-        'dislikeCount': dislikeCount,
-      });
-    });
+  bool _commentsEqual(List<Comment> a, List<Comment> b) {
+    if (identical(a, b)) return true;
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      final ca = a[i];
+      final cb = b[i];
+      if (ca.id != cb.id) return false;
+      if (ca.text != cb.text) return false;
+      if (ca.type != cb.type) return false;
+      if (ca.mediaUrl != cb.mediaUrl) return false;
+      if (ca.likeCount != cb.likeCount) return false;
+      if (ca.dislikeCount != cb.dislikeCount) return false;
+    }
+    return true;
   }
 }

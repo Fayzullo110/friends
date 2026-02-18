@@ -1,7 +1,5 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
-import 'package:firebase_auth/firebase_auth.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 
 import '../../l10n/app_localizations.dart';
@@ -67,8 +65,8 @@ class HomeScreen extends StatelessWidget {
           ),
           Builder(
             builder: (context) {
-              final user = FirebaseAuth.instance.currentUser;
-              if (user == null) {
+              final me = AuthService.instance.currentUser;
+              if (me == null) {
                 return IconButton(
                   icon: const Icon(IOSIcons.bell),
                   onPressed: () {
@@ -83,7 +81,7 @@ class HomeScreen extends StatelessWidget {
 
               return StreamBuilder<List<AppNotification>>(
                 stream: NotificationService.instance
-                    .watchMyUnreadNotifications(uid: user.uid),
+                    .watchMyUnreadNotifications(uid: me.id),
                 builder: (context, snapshot) {
                   final items = snapshot.data ?? const <AppNotification>[];
                   final count = items.length;
@@ -148,7 +146,7 @@ class HomeScreen extends StatelessWidget {
           final rawPosts = snapshot.data ?? [];
           final isLoading = snapshot.connectionState == ConnectionState.waiting;
 
-          final authUser = FirebaseAuth.instance.currentUser;
+          final me = AuthService.instance.currentUser;
 
           Widget buildFeed(List<Post> posts) {
             return Container(
@@ -210,6 +208,7 @@ class HomeScreen extends StatelessWidget {
                           id: post.id,
                           authorId: post.authorId,
                           username: post.authorUsername,
+                          authorPhotoUrl: post.authorPhotoUrl,
                           timeAgo: _formatTimeAgo(post.createdAt),
                           isTextOnly: isTextOnly,
                           text: post.text,
@@ -231,7 +230,7 @@ class HomeScreen extends StatelessWidget {
           }
 
           // If not logged in, show all posts.
-          if (authUser == null) {
+          if (me == null) {
             return buildFeed(rawPosts);
           }
 
@@ -240,7 +239,7 @@ class HomeScreen extends StatelessWidget {
           return FutureBuilder<List<Post>>(
             future: () async {
               final myBlockedIds = await BlockService.instance
-                  .getBlockedOnce(uid: authUser.uid);
+                  .getBlockedOnce(uid: me.id);
 
               // First filter out authors I have blocked.
               final byOthers = rawPosts
@@ -252,7 +251,7 @@ class HomeScreen extends StatelessWidget {
               final futures = authorIds.map((authorId) async {
                 final blockedMe = await BlockService.instance.isBlocked(
                   fromUserId: authorId,
-                  toUserId: authUser.uid,
+                  toUserId: me.id,
                 );
                 return MapEntry(authorId, blockedMe);
               }).toList();
@@ -309,8 +308,8 @@ class _CommentsSheetState extends State<_CommentsSheet> {
   }
 
   Future<void> _submit() async {
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null) {
+    final me = AuthService.instance.currentUser;
+    if (me == null) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Please log in to comment.')),
@@ -325,8 +324,8 @@ class _CommentsSheetState extends State<_CommentsSheet> {
     try {
       await CommentService.instance.addComment(
         postId: widget.postId,
-        authorId: user.uid,
-        authorUsername: user.email ?? 'user',
+        authorId: me.id,
+        authorUsername: me.email,
         text: trimmed,
         parentCommentId: _replyTo?.id,
       );
@@ -334,8 +333,8 @@ class _CommentsSheetState extends State<_CommentsSheet> {
       await NotificationService.instance.createNotification(
         toUserId: widget.postAuthorId,
         type: AppNotificationType.comment,
-        fromUserId: user.uid,
-        fromUsername: user.email ?? 'user',
+        fromUserId: me.id,
+        fromUsername: me.email,
         postId: widget.postId,
       );
 
@@ -343,11 +342,6 @@ class _CommentsSheetState extends State<_CommentsSheet> {
       setState(() {
         _replyTo = null;
       });
-    } on FirebaseException catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(e.message ?? e.code)),
-      );
     } catch (_) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -357,8 +351,8 @@ class _CommentsSheetState extends State<_CommentsSheet> {
   }
 
   Future<void> _sendGif(String gifUrl) async {
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null) {
+    final me = AuthService.instance.currentUser;
+    if (me == null) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Please log in to comment.')),
@@ -369,8 +363,8 @@ class _CommentsSheetState extends State<_CommentsSheet> {
     try {
       await CommentService.instance.addGifComment(
         postId: widget.postId,
-        authorId: user.uid,
-        authorUsername: user.email ?? 'user',
+        authorId: me.id,
+        authorUsername: me.email,
         gifUrl: gifUrl,
         parentCommentId: _replyTo?.id,
       );
@@ -378,14 +372,9 @@ class _CommentsSheetState extends State<_CommentsSheet> {
       await NotificationService.instance.createNotification(
         toUserId: widget.postAuthorId,
         type: AppNotificationType.comment,
-        fromUserId: user.uid,
-        fromUsername: user.email ?? 'user',
+        fromUserId: me.id,
+        fromUsername: me.email,
         postId: widget.postId,
-      );
-    } on FirebaseException catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(e.message ?? e.code)),
       );
     } catch (_) {
       if (!mounted) return;
@@ -460,7 +449,7 @@ class _CommentsSheetState extends State<_CommentsSheet> {
                         itemBuilder: (context, index) {
                           final c = ordered[index];
                           final currentUserId =
-                              FirebaseAuth.instance.currentUser?.uid;
+                              AuthService.instance.currentUser?.id;
                           final isLiked = currentUserId != null &&
                               c.likedBy.contains(currentUserId);
                           final isDisliked = currentUserId != null &&
@@ -472,44 +461,25 @@ class _CommentsSheetState extends State<_CommentsSheet> {
                             child: Row(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                FutureBuilder<
-                                    DocumentSnapshot<Map<String, dynamic>>>(
-                                  future: FirebaseFirestore.instance
-                                      .collection('users')
-                                      .doc(c.authorId)
-                                      .get(),
-                                  builder: (context, snap) {
-                                    String? photoUrl;
-                                    if (snap.hasData && snap.data!.exists) {
-                                      final data = snap.data!.data();
-                                      photoUrl = data?['photoUrl'] as String?;
-                                    }
-                                    return CircleAvatar(
-                                      radius: 16,
-                                      backgroundColor: theme
-                                          .colorScheme.primary
-                                          .withOpacity(0.12),
-                                      backgroundImage: (photoUrl != null &&
-                                              photoUrl.isNotEmpty)
-                                          ? NetworkImage(photoUrl)
-                                          : null,
-                                      child: (photoUrl == null ||
-                                              photoUrl.isEmpty)
-                                          ? Text(
-                                              c.authorUsername.isNotEmpty
-                                                  ? c.authorUsername
-                                                      .substring(0, 1)
-                                                      .toUpperCase()
-                                                  : 'U',
-                                              style: TextStyle(
-                                                color: theme
-                                                    .colorScheme.primary,
-                                                fontWeight: FontWeight.w700,
-                                              ),
-                                            )
-                                          : null,
-                                    );
-                                  },
+                                CircleAvatar(
+                                  radius: 16,
+                                  backgroundColor:
+                                      theme.colorScheme.primary.withOpacity(0.12),
+                                  foregroundImage: (c.authorPhotoUrl != null &&
+                                          c.authorPhotoUrl!.isNotEmpty)
+                                      ? NetworkImage(c.authorPhotoUrl!)
+                                      : null,
+                                  child: Text(
+                                    c.authorUsername.isNotEmpty
+                                        ? c.authorUsername
+                                            .substring(0, 1)
+                                            .toUpperCase()
+                                        : 'U',
+                                    style: TextStyle(
+                                      color: theme.colorScheme.primary,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
                                 ),
                                 const SizedBox(width: 10),
                                 Expanded(
@@ -816,8 +786,8 @@ class _StoriesRow extends StatelessWidget {
 
               // If not logged in, just group all stories by author. Seen state
               // is not tracked when there is no authenticated user.
-              final authUser = FirebaseAuth.instance.currentUser;
-              if (authUser == null) {
+              final me = AuthService.instance.currentUser;
+              if (me == null) {
                 final Map<String, List<Story>> byUser = {};
                 for (final s in allStories) {
                   byUser.putIfAbsent(s.authorId, () => []).add(s);
@@ -918,7 +888,7 @@ class _StoriesRow extends StatelessWidget {
               return FutureBuilder<Map<String, List<Story>>>(
                 future: () async {
                   final myBlockedIds = await BlockService.instance
-                      .getBlockedOnce(uid: authUser.uid);
+                      .getBlockedOnce(uid: me.id);
 
                   // Authors for all stories except those I have blocked.
                   final stories = allStories
@@ -930,7 +900,7 @@ class _StoriesRow extends StatelessWidget {
                   final futures = authorIds.map((authorId) async {
                     final blockedMe = await BlockService.instance.isBlocked(
                       fromUserId: authorId,
-                      toUserId: authUser.uid,
+                      toUserId: me.id,
                     );
                     return MapEntry(authorId, blockedMe);
                   }).toList();
@@ -954,13 +924,13 @@ class _StoriesRow extends StatelessWidget {
                 builder: (context, filteredSnap) {
                   final byUser = filteredSnap.data ?? <String, List<Story>>{};
                   final userIds = byUser.keys
-                      .where((id) => id != authUser.uid)
+                      .where((id) => id != me.id)
                       .toList();
 
                   return StreamBuilder<AppUser?>(
                     stream: AuthService.instance.userChanges,
                     builder: (context, meSnap) {
-                      final me = meSnap.data;
+                      final meProfile = meSnap.data;
 
                       return ListView.separated(
                         scrollDirection: Axis.horizontal,
@@ -970,10 +940,10 @@ class _StoriesRow extends StatelessWidget {
                           // First item is always current user shortcut.
                           if (index == 0) {
                             final List<Story> myStoriesFromActive =
-                                byUser[authUser.uid] ?? const <Story>[];
+                                byUser[me.id] ?? const <Story>[];
                             return StreamBuilder<List<Story>>(
                               stream: StoryService.instance
-                                  .watchUserStories(authorId: authUser.uid),
+                                  .watchUserStories(authorId: me.id),
                               initialData: myStoriesFromActive,
                               builder: (context, mySnap) {
                                 final raw = mySnap.hasError
@@ -1008,16 +978,16 @@ class _StoriesRow extends StatelessWidget {
                                 final allSeen = hasStories
                                     ? effectiveStories.every(
                                         (s) =>
-                                            s.seenBy.contains(authUser.uid),
+                                            s.seenBy.contains(me.id),
                                       )
                                     : false;
 
                                 return _StoryAvatar(
-                                  label: me?.username ?? 'You',
+                                  label: meProfile?.username ?? 'You',
                                   isCurrentUser: true,
                                   hasStory: hasStories,
                                   isSeen: allSeen,
-                                  photoUrl: me?.photoUrl,
+                                  photoUrl: meProfile?.photoUrl,
                                   onTap: () {
                                     if (!context.mounted) return;
                                     if (!hasStories) {
@@ -1074,7 +1044,7 @@ class _StoriesRow extends StatelessWidget {
                               : 'friend';
 
                           final isSeen = sortedStories.every(
-                            (s) => s.seenBy.contains(authUser.uid),
+                            (s) => s.seenBy.contains(me.id),
                           );
 
                           return _StoryAvatar(
@@ -1196,6 +1166,7 @@ class _PostItemData {
   final String id;
   final String authorId;
   final String username;
+  final String? authorPhotoUrl;
   final String timeAgo;
   final bool isTextOnly;
   final String text;
@@ -1210,6 +1181,7 @@ class _PostItemData {
     required this.id,
     required this.authorId,
     required this.username,
+    this.authorPhotoUrl,
     required this.timeAgo,
     required this.isTextOnly,
     required this.text,
@@ -1226,6 +1198,81 @@ class _PostCard extends StatelessWidget {
   final _PostItemData post;
 
   const _PostCard({required this.post});
+
+  Future<void> _editPost(BuildContext context) async {
+    final controller = TextEditingController(text: post.text);
+    try {
+      final ok = await showDialog<bool>(
+        context: context,
+        builder: (context) {
+          return AlertDialog(
+            title: const Text('Edit post'),
+            content: TextField(
+              controller: controller,
+              maxLines: 5,
+              decoration: const InputDecoration(
+                border: OutlineInputBorder(),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(false),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.of(context).pop(true),
+                child: const Text('Save'),
+              ),
+            ],
+          );
+        },
+      );
+      if (ok != true) return;
+      await PostService.instance.updatePost(postId: post.id, text: controller.text);
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Post updated')),
+      );
+    } finally {
+      controller.dispose();
+    }
+  }
+
+  Future<void> _archivePost(BuildContext context) async {
+    await PostService.instance.archivePost(postId: post.id);
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Post archived')),
+    );
+  }
+
+  Future<void> _deletePost(BuildContext context) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Delete post?'),
+          content: const Text('This will remove the post from your feed.'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('Delete'),
+            ),
+          ],
+        );
+      },
+    );
+    if (confirm != true) return;
+    await PostService.instance.deletePost(postId: post.id);
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Post deleted')),
+    );
+  }
 
   void _openComments(BuildContext context) {
     showModalBottomSheet(
@@ -1246,8 +1293,9 @@ class _PostCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final onSurface = theme.colorScheme.onSurface;
-    final currentUserId = FirebaseAuth.instance.currentUser?.uid;
+    final currentUserId = AuthService.instance.currentUser?.id;
     final isLiked = currentUserId != null && post.likedBy.contains(currentUserId);
+    final isOwner = currentUserId != null && currentUserId == post.authorId;
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
@@ -1280,6 +1328,10 @@ class _PostCard extends StatelessWidget {
                       radius: 18,
                       backgroundColor:
                           theme.colorScheme.primary.withOpacity(0.12),
+                      foregroundImage: (post.authorPhotoUrl != null &&
+                              post.authorPhotoUrl!.isNotEmpty)
+                          ? NetworkImage(post.authorPhotoUrl!)
+                          : null,
                       child: Text(
                         post.username.isNotEmpty
                             ? post.username.substring(0, 1).toUpperCase()
@@ -1335,11 +1387,45 @@ class _PostCard extends StatelessWidget {
                       ],
                     ),
                     const Spacer(),
-                    IconButton(
-                      icon:
-                          const Icon(IOSIcons.more),
-                      onPressed: () {},
-                    ),
+                    PopupMenuButton<String>(
+                      icon: const Icon(IOSIcons.more),
+                      onSelected: (value) async {
+                        if (!isOwner) return;
+                        try {
+                          if (value == 'edit') {
+                            await _editPost(context);
+                          }
+                          if (value == 'archive') {
+                            await _archivePost(context);
+                          }
+                          if (value == 'delete') {
+                            await _deletePost(context);
+                          }
+                        } catch (_) {
+                          if (!context.mounted) return;
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(content: Text('Action failed')),
+                          );
+                        }
+                      },
+                      itemBuilder: (context) {
+                        if (!isOwner) return const <PopupMenuEntry<String>>[];
+                        return const [
+                          PopupMenuItem(
+                            value: 'edit',
+                            child: Text('Edit'),
+                          ),
+                          PopupMenuItem(
+                            value: 'archive',
+                            child: Text('Archive'),
+                          ),
+                          PopupMenuItem(
+                            value: 'delete',
+                            child: Text('Delete'),
+                          ),
+                        ];
+                      },
+                    )
                   ],
                 ),
               ),
@@ -1351,31 +1437,33 @@ class _PostCard extends StatelessWidget {
                     bottomLeft: Radius.circular(16),
                     bottomRight: Radius.circular(16),
                   ),
-                  child: Stack(
-                    fit: StackFit.expand,
-                    children: [
-                      CachedNetworkImage(
-                        imageUrl: post.imageUrl!,
-                        fit: BoxFit.cover,
-                        height: 260,
-                      ),
-                      if (post.isVideo)
-                        Align(
-                          alignment: Alignment.center,
-                          child: Container(
-                            padding: const EdgeInsets.all(10),
-                            decoration: const BoxDecoration(
-                              color: Colors.black54,
-                              shape: BoxShape.circle,
-                            ),
-                            child: const Icon(
-                              Icons.play_arrow_rounded,
-                              color: Colors.white,
-                              size: 30,
+                  child: AspectRatio(
+                    aspectRatio: 1,
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        CachedNetworkImage(
+                          imageUrl: post.imageUrl!,
+                          fit: BoxFit.cover,
+                        ),
+                        if (post.isVideo)
+                          Align(
+                            alignment: Alignment.center,
+                            child: Container(
+                              padding: const EdgeInsets.all(10),
+                              decoration: const BoxDecoration(
+                                color: Colors.black54,
+                                shape: BoxShape.circle,
+                              ),
+                              child: const Icon(
+                                Icons.play_arrow_rounded,
+                                color: Colors.white,
+                                size: 30,
+                              ),
                             ),
                           ),
-                        ),
-                    ],
+                      ],
+                    ),
                   ),
                 )
               else
@@ -1429,13 +1517,12 @@ class _PostCard extends StatelessWidget {
                               );
 
                               if (!isLiked) {
+                                final me = AuthService.instance.currentUser;
                                 NotificationService.instance.createNotification(
                                   toUserId: post.authorId,
                                   type: AppNotificationType.like,
                                   fromUserId: currentUserId,
-                                  fromUsername: FirebaseAuth
-                                          .instance.currentUser?.email ??
-                                      'user',
+                                  fromUsername: me?.email ?? 'user',
                                   postId: post.id,
                                 );
                               }
@@ -1450,14 +1537,13 @@ class _PostCard extends StatelessWidget {
                     IconButton(
                       icon: const Icon(IOSIcons.share),
                       onPressed: () async {
-                        final user = FirebaseAuth.instance.currentUser;
-                        if (user == null) return;
+                        final me = AuthService.instance.currentUser;
+                        if (me == null) return;
 
                         await PostService.instance.repost(
                           sourcePostId: post.id,
-                          newAuthorId: user.uid,
-                          newAuthorUsername:
-                              user.email ?? user.displayName ?? 'user',
+                          newAuthorId: me.id,
+                          newAuthorUsername: me.email,
                         );
                       },
                       visualDensity: VisualDensity.compact,

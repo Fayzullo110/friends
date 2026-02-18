@@ -1,4 +1,3 @@
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 import '../../services/auth_service.dart';
@@ -43,8 +42,9 @@ class _LoginScreenState extends State<LoginScreen> {
         password: _passwordController.text.trim(),
       );
       debugPrint('Logged in as: ${user.email}');
-    } on FirebaseAuthException catch (e) {
-      final message = _mapAuthError(e);
+    } on Exception catch (e) {
+      debugPrint('Login error: $e');
+      final message = e.toString().replaceFirst('Exception: ', '');
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(message)),
       );
@@ -258,9 +258,30 @@ class _LoginScreenState extends State<LoginScreen> {
                                 mainAxisAlignment: MainAxisAlignment.center,
                                 children: [
                                   OutlinedButton.icon(
-                                    onPressed: () {
-                                      // TODO: Wire Google sign-in.
-                                    },
+                                    onPressed: _isLoading
+                                        ? null
+                                        : () async {
+                                            setState(() => _isLoading = true);
+                                            try {
+                                              await AuthService.instance
+                                                  .signInWithGoogle();
+                                            } catch (e) {
+                                              if (!context.mounted) return;
+                                              ScaffoldMessenger.of(context)
+                                                  .showSnackBar(
+                                                SnackBar(
+                                                  content: Text(
+                                                    'Google sign-in failed: $e',
+                                                  ),
+                                                ),
+                                              );
+                                            } finally {
+                                              if (mounted) {
+                                                setState(
+                                                    () => _isLoading = false);
+                                              }
+                                            }
+                                          },
                                     style: OutlinedButton.styleFrom(
                                       shape: RoundedRectangleBorder(
                                         borderRadius:
@@ -269,20 +290,6 @@ class _LoginScreenState extends State<LoginScreen> {
                                     ),
                                     icon: const Icon(IOSIcons.add), // Using add icon for Google G as placeholder
                                     label: const Text('Google'),
-                                  ),
-                                  const SizedBox(width: 12),
-                                  OutlinedButton.icon(
-                                    onPressed: () {
-                                      // TODO: Wire Facebook sign-in.
-                                    },
-                                    style: OutlinedButton.styleFrom(
-                                      shape: RoundedRectangleBorder(
-                                        borderRadius:
-                                            BorderRadius.circular(999),
-                                      ),
-                                    ),
-                                    icon: const Icon(IOSIcons.personAdd), // Using person add for Facebook placeholder
-                                    label: const Text('Facebook'),
                                   ),
                                 ],
                               ),
@@ -299,20 +306,5 @@ class _LoginScreenState extends State<LoginScreen> {
         ),
       ),
     );
-  }
-
-  String _mapAuthError(FirebaseAuthException e) {
-    switch (e.code) {
-      case 'user-not-found':
-        return 'No account found for that email.';
-      case 'wrong-password':
-        return 'Incorrect password. Please try again.';
-      case 'invalid-email':
-        return 'The email address is not valid.';
-      case 'user-disabled':
-        return 'This account has been disabled.';
-      default:
-        return 'Login failed. Please try again.';
-    }
   }
 }

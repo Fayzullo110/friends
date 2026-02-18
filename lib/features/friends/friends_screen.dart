@@ -1,12 +1,11 @@
 import 'package:flutter/material.dart';
-import 'package:firebase_auth/firebase_auth.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 
 import '../../models/app_user.dart';
 import '../../services/friend_service.dart';
 import '../../services/auth_service.dart';
 import '../../services/chat_service.dart';
 import '../chat/chat_detail_screen.dart';
+import 'friend_requests_screen.dart';
 
 class FriendsScreen extends StatelessWidget {
   const FriendsScreen({super.key});
@@ -14,8 +13,8 @@ class FriendsScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null) {
+    final me = AuthService.instance.currentUser;
+    if (me == null) {
       return Scaffold(
         appBar: AppBar(title: const Text('Friends')),
         body: const Center(child: Text('Please log in to see friends.')),
@@ -25,9 +24,22 @@ class FriendsScreen extends StatelessWidget {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Friends'),
+        actions: [
+          IconButton(
+            tooltip: 'Friend requests',
+            icon: const Icon(Icons.person_add),
+            onPressed: () {
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => const FriendRequestsScreen(),
+                ),
+              );
+            },
+          ),
+        ],
       ),
       body: StreamBuilder<List<String>>(
-        stream: FriendService.instance.watchFriends(uid: user.uid),
+        stream: FriendService.instance.watchFriends(uid: me.id),
         builder: (context, snapshot) {
           final ids = snapshot.data ?? [];
           if (ids.isEmpty) {
@@ -41,14 +53,10 @@ class FriendsScreen extends StatelessWidget {
             );
           }
 
-          return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-            stream: FirebaseFirestore.instance
-                .collection('users')
-                .where(FieldPath.documentId, whereIn: ids)
-                .snapshots(),
+          return FutureBuilder<List<AppUser>>(
+            future: _loadUsers(ids),
             builder: (context, usersSnap) {
-              final docs = usersSnap.data?.docs ?? [];
-              final friends = docs.map(AppUser.fromDoc).toList();
+              final friends = usersSnap.data ?? [];
 
               return ListView.separated(
                 itemCount: friends.length,
@@ -68,14 +76,11 @@ class FriendsScreen extends StatelessWidget {
                     ),
                     title: Text(u.username),
                     subtitle: Text(
-                      u.isOnline
-                          ? 'Online'
-                          : _formatLastSeen(u.lastActiveAt),
+                      _presenceText(u),
                       style: theme.textTheme.labelSmall?.copyWith(
                         color: u.isOnline
                             ? Colors.green
-                            : theme.colorScheme.onSurface
-                                .withOpacity(0.6),
+                            : theme.colorScheme.onSurface.withOpacity(0.6),
                       ),
                     ),
                     trailing: const Icon(Icons.chat_bubble_outline),
@@ -91,6 +96,7 @@ class FriendsScreen extends StatelessWidget {
                           builder: (_) => ChatDetailScreen(
                             chatId: chatId,
                             title: u.username,
+                            otherUserId: u.id,
                           ),
                         ),
                       );
@@ -106,7 +112,17 @@ class FriendsScreen extends StatelessWidget {
   }
 }
 
-String _formatLastSeen(DateTime? dt) {
+Future<List<AppUser>> _loadUsers(List<String> ids) async {
+  if (ids.isEmpty) return <AppUser>[];
+  final parsed = ids.map(int.parse).toList();
+  final qs = parsed.join(',');
+  final rows = await AuthService.instance.api.getListOfMaps('/api/users?ids=$qs');
+  return rows.map(AppUser.fromJson).toList();
+}
+
+String _presenceText(AppUser u) {
+  if (u.isOnline) return 'Online';
+  final dt = u.lastActiveAt;
   if (dt == null) return '';
   final diff = DateTime.now().difference(dt);
   if (diff.inMinutes < 1) return 'Last seen just now';

@@ -1,12 +1,11 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
-
 enum ChatMessageType { text, gif, voice, video, image, file }
 
 class ChatMessage {
   final String id;
   final String senderId;
+  final String senderUsername;
   final ChatMessageType type;
-  final String text;
+  final String? text;
   final String? mediaUrl;
   final DateTime createdAt;
   final Map<String, List<String>> reactions;
@@ -15,54 +14,38 @@ class ChatMessage {
   ChatMessage({
     required this.id,
     required this.senderId,
+    required this.senderUsername,
     required this.type,
-    required this.text,
+    this.text,
     this.mediaUrl,
     required this.createdAt,
     required this.reactions,
     required this.seenBy,
   });
 
-  factory ChatMessage.fromDoc(DocumentSnapshot<Map<String, dynamic>> doc) {
-    final data = doc.data() ?? {};
+  factory ChatMessage.fromJson(Map<String, dynamic> json) {
+    final data = json;
     final typeStr = data['type'] as String? ?? 'text';
 
-    ChatMessageType type;
-    switch (typeStr) {
-      case 'gif':
-        type = ChatMessageType.gif;
-        break;
-      case 'voice':
-        type = ChatMessageType.voice;
-        break;
-      case 'video':
-        type = ChatMessageType.video;
-        break;
-      case 'image':
-        type = ChatMessageType.image;
-        break;
-      case 'file':
-        type = ChatMessageType.file;
-        break;
-      default:
-        type = ChatMessageType.text;
-    }
-
     return ChatMessage(
-      id: doc.id,
-      senderId: data['senderId'] as String? ?? '',
-      type: type,
-      text: data['text'] as String? ?? '',
+      id: data['id'].toString(),
+      senderId: data['senderId'].toString(),
+      senderUsername: data['senderUsername'] as String? ?? '',
+      type: _typeFromString(typeStr),
+      text: data['text'] as String?,
       mediaUrl: data['mediaUrl'] as String?,
-      createdAt: (data['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
+      createdAt: DateTime.fromMillisecondsSinceEpoch(
+        (data['createdAt'] as num?)?.toInt() ?? 0,
+        isUtc: false,
+      ),
       reactions: _decodeReactions(data['reactions']),
       seenBy: (data['seenBy'] as List<dynamic>? ?? const [])
-          .map((e) => e as String)
+          .map((e) => e.toString())
           .toList(),
     );
   }
 
-  Map<String, dynamic> toMap() {
+  Map<String, dynamic> toJson() {
     String typeStr;
     switch (type) {
       case ChatMessageType.gif:
@@ -85,21 +68,25 @@ class ChatMessage {
     }
 
     return {
+      'id': id,
       'senderId': senderId,
+      'senderUsername': senderUsername,
       'type': typeStr,
       'text': text,
       'mediaUrl': mediaUrl,
-      'createdAt': Timestamp.fromDate(createdAt),
+      'createdAt': createdAt.millisecondsSinceEpoch,
       'reactions': _encodeReactions(reactions),
       'seenBy': seenBy,
     };
   }
 
+  Map<String, dynamic> toMap() => toJson();
+
   static Map<String, List<String>> _decodeReactions(dynamic raw) {
     if (raw is Map<String, dynamic>) {
       return raw.map((key, value) {
         final list = (value as List<dynamic>? ?? const [])
-            .map((e) => e as String)
+            .map((e) => e.toString())
             .toList();
         return MapEntry(key, list);
       });
@@ -110,5 +97,23 @@ class ChatMessage {
   static Map<String, List<String>> _encodeReactions(
       Map<String, List<String>> reactions) {
     return reactions.map((key, value) => MapEntry(key, List<String>.from(value)));
+  }
+
+  static ChatMessageType _typeFromString(String? value) {
+    switch (value) {
+      case 'gif':
+        return ChatMessageType.gif;
+      case 'voice':
+        return ChatMessageType.voice;
+      case 'video':
+        return ChatMessageType.video;
+      case 'image':
+        return ChatMessageType.image;
+      case 'file':
+        return ChatMessageType.file;
+      case 'text':
+      default:
+        return ChatMessageType.text;
+    }
   }
 }

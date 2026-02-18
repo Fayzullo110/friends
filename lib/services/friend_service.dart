@@ -1,4 +1,6 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'dart:async';
+
+import 'auth_service.dart';
 
 class FriendRequest {
   final String id;
@@ -17,26 +19,27 @@ class FriendRequest {
     required this.status,
   });
 
-  factory FriendRequest.fromDoc(
-      DocumentSnapshot<Map<String, dynamic>> doc) {
-    final data = doc.data() ?? {};
+  factory FriendRequest.fromJson(Map<String, dynamic> data) {
     return FriendRequest(
-      id: doc.id,
-      fromUserId: data['fromUserId'] as String? ?? '',
-      toUserId: data['toUserId'] as String? ?? '',
+      id: data['id'].toString(),
+      fromUserId: data['fromUserId'].toString(),
+      toUserId: data['toUserId'].toString(),
       fromUsername: data['fromUsername'] as String? ?? '',
-      createdAt:
-          (data['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
+      createdAt: DateTime.fromMillisecondsSinceEpoch(
+        (data['createdAt'] as num?)?.toInt() ?? 0,
+        isUtc: false,
+      ),
       status: data['status'] as String? ?? 'pending',
     );
   }
 
-  Map<String, dynamic> toMap() {
+  Map<String, dynamic> toJson() {
     return {
+      'id': id,
       'fromUserId': fromUserId,
       'toUserId': toUserId,
       'fromUsername': fromUsername,
-      'createdAt': Timestamp.fromDate(createdAt),
+      'createdAt': createdAt.millisecondsSinceEpoch,
       'status': status,
     };
   }
@@ -47,84 +50,99 @@ class FriendService {
 
   static final FriendService instance = FriendService._();
 
-  final _firestore = FirebaseFirestore.instance;
-
-  CollectionReference<Map<String, dynamic>> get _requestsRef =>
-      _firestore.collection('friendRequests');
-
-  CollectionReference<Map<String, dynamic>> _friendsRef(String uid) =>
-      _firestore.collection('friends').doc(uid).collection('items');
-
   Future<void> sendRequest({
     required String fromUserId,
     required String fromUsername,
     required String toUserId,
   }) async {
     if (fromUserId == toUserId) return;
-
-    final existing = await _requestsRef
-        .where('fromUserId', isEqualTo: fromUserId)
-        .where('toUserId', isEqualTo: toUserId)
-        .where('status', isEqualTo: 'pending')
-        .limit(1)
-        .get();
-    if (existing.docs.isNotEmpty) return;
-
-    final req = FriendRequest(
-      id: '',
-      fromUserId: fromUserId,
-      toUserId: toUserId,
-      fromUsername: fromUsername,
-      createdAt: DateTime.now(),
-      status: 'pending',
-    );
-
-    await _requestsRef.add(req.toMap());
+    final target = int.parse(toUserId);
+    await AuthService.instance.api.postNoContent('/api/friends/requests/$target');
   }
 
   Stream<List<FriendRequest>> watchIncoming({required String uid}) {
-    return _requestsRef
-        .where('toUserId', isEqualTo: uid)
-        .where('status', isEqualTo: 'pending')
-        .orderBy('createdAt', descending: true)
-        .snapshots()
-        .map((snap) =>
-            snap.docs.map((d) => FriendRequest.fromDoc(d)).toList());
+    final controller = StreamController<List<FriendRequest>>();
+    List<FriendRequest>? last;
+
+    Future<void> tick() async {
+      try {
+        final rows = await AuthService.instance.api
+            .getListOfMaps('/api/friends/requests/incoming');
+        final next = rows.map(FriendRequest.fromJson).toList();
+        if (last == null || !_reqEquals(last!, next)) {
+          last = next;
+          controller.add(next);
+        }
+      } catch (_) {
+        // swallow
+      }
+    }
+
+    tick();
+    final timer = Timer.periodic(const Duration(seconds: 10), (_) => tick());
+    controller.onCancel = () {
+      timer.cancel();
+      controller.close();
+    };
+    return controller.stream;
   }
 
   Future<void> acceptRequest(String requestId) async {
-    final reqSnap = await _requestsRef.doc(requestId).get();
-    if (!reqSnap.exists) return;
-    final req = FriendRequest.fromDoc(reqSnap);
-
-    await _firestore.runTransaction((tx) async {
-      tx.update(_requestsRef.doc(requestId), {'status': 'accepted'});
-
-      final aRef = _friendsRef(req.fromUserId).doc(req.toUserId);
-      final bRef = _friendsRef(req.toUserId).doc(req.fromUserId);
-
-      tx.set(aRef, {
-        'friendId': req.toUserId,
-        'createdAt': FieldValue.serverTimestamp(),
-      });
-      tx.set(bRef, {
-        'friendId': req.fromUserId,
-        'createdAt': FieldValue.serverTimestamp(),
-      });
-    });
+    final id = int.parse(requestId);
+    await AuthService.instance.api
+        .postNoContent('/api/friends/requests/$id/accept');
   }
 
   Future<void> rejectRequest(String requestId) async {
-    await _requestsRef.doc(requestId).update({'status': 'rejected'});
+    final id = int.parse(requestId);
+    await AuthService.instance.api
+        .postNoContent('/api/friends/requests/$id/reject');
   }
 
   Stream<List<String>> watchFriends({required String uid}) {
-    return _friendsRef(uid)
-        .orderBy('createdAt', descending: true)
-        .snapshots()
-        .map((snap) => snap.docs
-            .map((d) => d.data()['friendId'] as String? ?? '')
-            .where((id) => id.isNotEmpty)
-            .toList());
+    final controller = StreamController<List<String>>();
+    List<String>? last;
+
+    Future<void> tick() async {
+      try {
+        final list = await AuthService.instance.api.getList('/api/friends');
+        final next = list.map((e) => e.toString()).toList()..sort();
+        if (last == null || !_listEquals(last!, next)) {
+          last = next;
+          controller.add(next);
+        }
+      } catch (_) {
+        // swallow
+      }
+    }
+
+    tick();
+    final timer = Timer.periodic(const Duration(seconds: 15), (_) => tick());
+    controller.onCancel = () {
+      timer.cancel();
+      controller.close();
+    };
+    return controller.stream;
   }
+}
+
+bool _reqEquals(List<FriendRequest> a, List<FriendRequest> b) {
+  if (identical(a, b)) return true;
+  if (a.length != b.length) return false;
+  for (var i = 0; i < a.length; i++) {
+    final ra = a[i];
+    final rb = b[i];
+    if (ra.id != rb.id) return false;
+    if (ra.status != rb.status) return false;
+  }
+  return true;
+}
+
+bool _listEquals(List<String> a, List<String> b) {
+  if (identical(a, b)) return true;
+  if (a.length != b.length) return false;
+  for (var i = 0; i < a.length; i++) {
+    if (a[i] != b[i]) return false;
+  }
+  return true;
 }

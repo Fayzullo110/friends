@@ -1,5 +1,3 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
-
 enum CommentType {
   text,
   gif,
@@ -10,6 +8,7 @@ class Comment {
   final String postId;
   final String authorId;
   final String authorUsername;
+  final String? authorPhotoUrl;
   final String text;
   final CommentType type;
   final String? mediaUrl;
@@ -25,6 +24,7 @@ class Comment {
     required this.postId,
     required this.authorId,
     required this.authorUsername,
+    this.authorPhotoUrl,
     required this.text,
     required this.type,
     this.mediaUrl,
@@ -36,40 +36,42 @@ class Comment {
     required this.dislikedBy,
   });
 
-  factory Comment.fromDoc(
-    DocumentSnapshot<Map<String, dynamic>> doc, {
-    required String postId,
-  }) {
-    final data = doc.data() ?? {};
+  factory Comment.fromJson(Map<String, dynamic> data) {
     return Comment(
-      id: doc.id,
-      postId: postId,
-      authorId: data['authorId'] as String? ?? '',
+      id: data['id'].toString(),
+      postId: data['postId'].toString(),
+      authorId: data['authorId'].toString(),
       authorUsername: data['authorUsername'] as String? ?? '',
+      authorPhotoUrl: data['authorPhotoUrl'] as String?,
       text: data['text'] as String? ?? '',
       type: _typeFromString(data['type'] as String?),
       mediaUrl: data['mediaUrl'] as String?,
-      createdAt: (data['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
-      likeCount: data['likeCount'] as int? ?? 0,
+      createdAt: DateTime.fromMillisecondsSinceEpoch(
+        (data['createdAt'] as num?)?.toInt() ?? 0,
+        isUtc: false,
+      ),
+      likeCount: (data['likeCount'] as num?)?.toInt() ?? 0,
       likedBy: (data['likedBy'] as List<dynamic>? ?? const [])
-          .map((e) => e as String)
+          .map((e) => e.toString())
           .toList(),
-      parentCommentId: data['parentCommentId'] as String?,
-      dislikeCount: data['dislikeCount'] as int? ?? 0,
+      parentCommentId: data['parentCommentId']?.toString(),
+      dislikeCount: (data['dislikeCount'] as num?)?.toInt() ?? 0,
       dislikedBy: (data['dislikedBy'] as List<dynamic>? ?? const [])
-          .map((e) => e as String)
+          .map((e) => e.toString())
           .toList(),
     );
   }
 
-  Map<String, dynamic> toMap() {
+  Map<String, dynamic> toJson() {
     return {
+      'id': id,
       'authorId': authorId,
       'authorUsername': authorUsername,
+      'authorPhotoUrl': authorPhotoUrl,
       'text': text,
       'type': _typeToString(type),
       'mediaUrl': mediaUrl,
-      'createdAt': Timestamp.fromDate(createdAt),
+      'createdAt': createdAt.millisecondsSinceEpoch,
       'likeCount': likeCount,
       'likedBy': likedBy,
       'parentCommentId': parentCommentId,

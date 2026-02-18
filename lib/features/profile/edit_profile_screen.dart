@@ -1,9 +1,8 @@
 import 'package:flutter/material.dart';
-import 'package:firebase_storage/firebase_storage.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 
 import '../../models/app_user.dart';
+import '../../services/auth_service.dart';
 
 class EditProfileScreen extends StatefulWidget {
   final AppUser user;
@@ -48,13 +47,13 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       if (picked == null) return;
 
       final bytes = await picked.readAsBytes();
-      final ref = FirebaseStorage.instance
-          .ref()
-          .child('avatars')
-          .child('${widget.user.id}.jpg');
-
-      final task = await ref.putData(bytes);
-      final url = await task.ref.getDownloadURL();
+      final res = await AuthService.instance.api.uploadFile(
+        path: '/api/uploads',
+        bytes: bytes,
+        filename: picked.name,
+      );
+      final url = (res['url'] as String?) ?? '';
+      if (url.isEmpty) throw Exception('Upload failed');
 
       if (!mounted) return;
       setState(() {
@@ -75,13 +74,13 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       if (picked == null) return;
 
       final bytes = await picked.readAsBytes();
-      final ref = FirebaseStorage.instance
-          .ref()
-          .child('backgrounds')
-          .child('${widget.user.id}.jpg');
-
-      final task = await ref.putData(bytes);
-      final url = await task.ref.getDownloadURL();
+      final res = await AuthService.instance.api.uploadFile(
+        path: '/api/uploads',
+        bytes: bytes,
+        filename: picked.name,
+      );
+      final url = (res['url'] as String?) ?? '';
+      if (url.isEmpty) throw Exception('Upload failed');
 
       if (!mounted) return;
       setState(() {
@@ -125,21 +124,22 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     });
 
     try {
-      await FirebaseFirestore.instance
-          .collection('users')
-          .doc(widget.user.id)
-          .update({
-            'username': username,
-        if (bio.isNotEmpty) 'bio': bio,
-        if (_photoUrl != null) 'photoUrl': _photoUrl,
-        if (_backgroundImageUrl != null) 'backgroundImageUrl': _backgroundImageUrl,
-      });
+      final updated = await AuthService.instance.api.patchJson(
+        '/api/users/me',
+        {
+          'username': username,
+          'bio': bio,
+          'photoUrl': _photoUrl,
+          'backgroundImageUrl': _backgroundImageUrl,
+        },
+        (json) => AppUser.fromJson(json),
+      );
 
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Profile updated.')),
       );
-      Navigator.of(context).pop();
+      Navigator.of(context).pop(updated);
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(

@@ -1,13 +1,12 @@
-import 'dart:io';
+import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:firebase_auth/firebase_auth.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_storage/firebase_storage.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:just_audio/just_audio.dart';
 
 import '../../services/story_service.dart';
+import '../../services/auth_service.dart';
 import '../../theme/ios_icons.dart';
 import '../chat/gif_picker_sheet.dart';
 
@@ -287,8 +286,8 @@ class _CreateStoryScreenState extends State<CreateStoryScreen> {
   }
 
   Future<void> _submit() async {
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null) {
+    final me = AuthService.instance.currentUser;
+    if (me == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Please log in to share a story.')),
       );
@@ -324,25 +323,10 @@ class _CreateStoryScreenState extends State<CreateStoryScreen> {
     });
 
     try {
-      String username = user.email?.split('@').first ?? 'user';
-      try {
-        final snap = await FirebaseFirestore.instance
-            .collection('users')
-            .doc(user.uid)
-            .get();
-        final data = snap.data();
-        final fromProfile = data?['username'] as String?;
-        if (fromProfile != null && fromProfile.isNotEmpty) {
-          username = fromProfile;
-        }
-      } catch (_) {
-        // ignore
-      }
-
       if (_type == _StoryType.text) {
         await StoryService.instance.createTextStory(
-          authorId: user.uid,
-          authorUsername: username,
+          authorId: me.id,
+          authorUsername: me.username,
           text: text,
           musicTitle: _musicTitle,
           musicArtist: _musicArtist,
@@ -350,8 +334,8 @@ class _CreateStoryScreenState extends State<CreateStoryScreen> {
         );
       } else if (_type == _StoryType.gif) {
         await StoryService.instance.createMediaStory(
-          authorId: user.uid,
-          authorUsername: username,
+          authorId: me.id,
+          authorUsername: me.username,
           mediaUrl: _gifUrl!,
           mediaType: 'gif',
           text: text.isEmpty ? null : text,
@@ -360,22 +344,21 @@ class _CreateStoryScreenState extends State<CreateStoryScreen> {
           musicUrl: _musicUrl,
         );
       } else {
-        // Image or video upload to Storage.
-        final file = File(_selectedMedia!.path);
-        final storage = FirebaseStorage.instance;
-        final ext = _selectedMedia!.path.split('.').last;
-        final isVideo = _type == _StoryType.video;
-        final ref = storage
-            .ref()
-            .child('storyMedia/${user.uid}/${DateTime.now().millisecondsSinceEpoch}.$ext');
+        final bytes = await _selectedMedia!.readAsBytes();
+        final upload = await AuthService.instance.api.uploadFile(
+          path: '/api/uploads',
+          bytes: bytes,
+          filename: _selectedMedia!.name,
+        );
+        final mediaUrl = (upload['url'] as String?) ?? '';
+        if (mediaUrl.isEmpty) throw Exception('Upload failed');
 
-        await ref.putFile(file);
-        final url = await ref.getDownloadURL();
+        final isVideo = _type == _StoryType.video;
 
         await StoryService.instance.createMediaStory(
-          authorId: user.uid,
-          authorUsername: username,
-          mediaUrl: url,
+          authorId: me.id,
+          authorUsername: me.username,
+          mediaUrl: mediaUrl,
           mediaType: isVideo ? 'video' : 'image',
           text: text.isEmpty ? null : text,
           musicTitle: _musicTitle,
@@ -571,10 +554,28 @@ class _CreateStoryScreenState extends State<CreateStoryScreen> {
         child: Stack(
           fit: StackFit.expand,
           children: [
-            Image.file(
-              File(_selectedMedia!.path),
-              fit: BoxFit.cover,
-            ),
+            if (isImage)
+              FutureBuilder<Uint8List>(
+                future: _selectedMedia!.readAsBytes(),
+                builder: (context, snap) {
+                  if (!snap.hasData) {
+                    return const Center(
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    );
+                  }
+                  return Image.memory(
+                    snap.data!,
+                    fit: BoxFit.cover,
+                  );
+                },
+              )
+            else
+              Container(
+                color: Colors.black12,
+                child: const Center(
+                  child: Icon(IOSIcons.videoCam, size: 42),
+                ),
+              ),
             if (!isImage)
               Align(
                 alignment: Alignment.center,

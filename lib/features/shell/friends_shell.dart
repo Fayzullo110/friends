@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 
 import '../home/home_screen.dart';
@@ -8,6 +7,8 @@ import '../post/create_post_screen.dart';
 import '../chat/messages_screen.dart';
 import '../profile/profile_screen.dart';
 import '../../services/chat_service.dart';
+import '../../services/auth_service.dart';
+import '../../services/presence_service.dart';
 
 class FriendsShell extends StatefulWidget {
   const FriendsShell({super.key});
@@ -16,7 +17,7 @@ class FriendsShell extends StatefulWidget {
   State<FriendsShell> createState() => _FriendsShellState();
 }
 
-class _FriendsShellState extends State<FriendsShell> {
+class _FriendsShellState extends State<FriendsShell> with WidgetsBindingObserver {
   int _currentIndex = 0;
 
   final List<Widget> _pages = const [
@@ -28,14 +29,39 @@ class _FriendsShellState extends State<FriendsShell> {
   ];
 
   @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    PresenceService.instance.setOnline(true);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    PresenceService.instance.setOnline(false);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      PresenceService.instance.setOnline(true);
+    } else if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.detached ||
+        state == AppLifecycleState.inactive) {
+      PresenceService.instance.setOnline(false);
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final user = FirebaseAuth.instance.currentUser;
+    final me = AuthService.instance.currentUser;
 
     return StreamBuilder<int>(
-      stream: user == null
+      stream: me == null
           ? Stream<int>.value(0)
-          : ChatService.instance.watchUnreadChatCount(uid: user.uid),
+          : ChatService.instance.watchUnreadChatCount(uid: me.id),
       builder: (context, snapshot) {
         final unread = snapshot.data ?? 0;
 

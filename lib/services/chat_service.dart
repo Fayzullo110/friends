@@ -1,32 +1,109 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
-
 import '../models/app_user.dart';
 import '../models/chat.dart';
 import '../models/chat_message.dart';
+import 'dart:async';
+
+import 'auth_service.dart';
 
 class ChatService {
   ChatService._();
 
   static final ChatService instance = ChatService._();
 
-  final _chatsRef = FirebaseFirestore.instance.collection('chats');
+  bool _isBackendChatId(String chatId) => int.tryParse(chatId) != null;
+
+  // TODO: Replace with backend API reference
+  // final _chatsRef = FirebaseFirestore.instance.collection('chats');
 
   String directChatId(String uid1, String uid2) {
     final ids = [uid1, uid2]..sort();
     return '${ids[0]}_${ids[1]}';
   }
 
+  Future<void> setTyping({
+    required String chatId,
+    required String userId,
+    required bool isTyping,
+  }) async {
+    if (!_isBackendChatId(chatId)) return;
+    await AuthService.instance.api.postNoContent(
+      '/api/chats/$chatId/typing',
+      body: {
+        'isTyping': isTyping,
+      },
+    );
+  }
+
+  Stream<Map<String, bool>> watchTyping({required String chatId}) {
+    if (!_isBackendChatId(chatId)) {
+      return Stream.value(const <String, bool>{});
+    }
+    final controller = StreamController<Map<String, bool>>();
+    Map<String, bool>? last;
+
+    Future<void> tick() async {
+      try {
+        final ids = await AuthService.instance.api.getList('/api/chats/$chatId/typing');
+        final next = <String, bool>{
+          for (final id in ids) id.toString(): true,
+        };
+        if (last == null || !_typingEqual(last!, next)) {
+          last = next;
+          controller.add(next);
+        }
+      } catch (_) {
+        const empty = <String, bool>{};
+        if (last == null || !_typingEqual(last!, empty)) {
+          last = empty;
+          controller.add(empty);
+        }
+      }
+    }
+
+    tick();
+    final timer = Timer.periodic(const Duration(seconds: 2), (_) => tick());
+    controller.onCancel = () {
+      timer.cancel();
+      controller.close();
+    };
+    return controller.stream;
+  }
+
+  bool _typingEqual(Map<String, bool> a, Map<String, bool> b) {
+    if (identical(a, b)) return true;
+    if (a.length != b.length) return false;
+    for (final e in a.entries) {
+      if (b[e.key] != e.value) return false;
+    }
+    return true;
+  }
+
   String selfChatId(String uid) => 'self_$uid';
 
   Stream<List<Chat>> watchMyChats({required String uid}) {
-    return _chatsRef
-        .where('members', arrayContains: uid)
-        .orderBy('updatedAt', descending: true)
-        .snapshots()
-        .map((snap) => snap.docs.map((d) => Chat.fromDoc(d)).toList())
-        .handleError((error, stackTrace) {
-      // Keep UI alive if Firestore is temporarily unavailable.
-    });
+    final controller = StreamController<List<Chat>>();
+    List<Chat>? last;
+
+    Future<void> tick() async {
+      try {
+        final rows = await AuthService.instance.api.getListOfMaps('/api/chats');
+        final next = rows.map(Chat.fromJson).toList();
+        if (last == null || !_chatsEqual(last!, next)) {
+          last = next;
+          controller.add(next);
+        }
+      } catch (_) {
+        // swallow
+      }
+    }
+
+    tick();
+    final timer = Timer.periodic(const Duration(seconds: 6), (_) => tick());
+    controller.onCancel = () {
+      timer.cancel();
+      controller.close();
+    };
+    return controller.stream;
   }
 
   /// Watches the number of chats that have an unread last message for [uid].
@@ -34,107 +111,190 @@ class ChatService {
   /// A chat is considered "unread" if its most recent message was sent by
   /// someone else and that message's [seenBy] does not contain [uid].
   Stream<int> watchUnreadChatCount({required String uid}) {
-    return _chatsRef
-        .where('members', arrayContains: uid)
-        .snapshots()
-        .asyncMap((snap) async {
-      int count = 0;
+    final controller = StreamController<int>();
+    int? last;
 
-      for (final chatDoc in snap.docs) {
-        final messagesSnap = await chatDoc.reference
-            .collection('messages')
-            .orderBy('createdAt', descending: true)
-            .limit(1)
-            .get();
-
-        if (messagesSnap.docs.isEmpty) continue;
-
-        final msg = ChatMessage.fromDoc(messagesSnap.docs.first);
-        if (msg.senderId != uid && !msg.seenBy.contains(uid)) {
-          count++;
+    Future<void> tick() async {
+      try {
+        final rows = await AuthService.instance.api.getListOfMaps('/api/chats');
+        final chats = rows.map(Chat.fromJson).toList();
+        var unread = 0;
+        for (final c in chats) {
+          try {
+            final msgs = await AuthService.instance.api
+                .getListOfMaps('/api/chats/${c.id}/messages');
+            if (msgs.isEmpty) continue;
+            final m = ChatMessage.fromJson(msgs.first);
+            if (m.senderId != uid && !m.seenBy.contains(uid)) unread++;
+          } catch (_) {
+            // ignore
+          }
+        }
+        if (last == null || last != unread) {
+          last = unread;
+          controller.add(unread);
+        }
+      } catch (_) {
+        if (last == null || last != 0) {
+          last = 0;
+          controller.add(0);
         }
       }
+    }
 
-      return count;
-    }).handleError((error, stackTrace) {
-      // Keep UI alive if Firestore is temporarily unavailable.
-    });
+    tick();
+    final timer = Timer.periodic(const Duration(seconds: 12), (_) => tick());
+    controller.onCancel = () {
+      timer.cancel();
+      controller.close();
+    };
+    return controller.stream;
   }
 
   Stream<List<AppUser>> watchUsers({required String excludeUid}) {
-    return FirebaseFirestore.instance
-        .collection('users')
-        .snapshots()
-        .map(
-          (snap) => snap.docs
-              .where((d) => d.id != excludeUid)
-              .map((d) => AppUser.fromDoc(d))
-              .toList(),
-        )
-        .handleError((error, stackTrace) {
-      // Keep UI alive if Firestore is temporarily unavailable.
-    });
+    final controller = StreamController<List<AppUser>>();
+    List<AppUser>? last;
+
+    Future<void> tick() async {
+      try {
+        final rows = await AuthService.instance.api.getListOfMaps('/api/users/recent');
+        final next = rows
+            .where((u) => u['id'].toString() != excludeUid)
+            .map((u) => AppUser(
+                  id: u['id'].toString(),
+                  email: u['email'] as String? ?? '',
+                  username: u['username'] as String? ?? '',
+                  photoUrl: u['photoUrl'] as String?,
+                ))
+            .toList();
+        if (last == null || !_usersEqual(last!, next)) {
+          last = next;
+          controller.add(next);
+        }
+      } catch (_) {
+        // swallow
+      }
+    }
+
+    tick();
+    final timer = Timer.periodic(const Duration(seconds: 15), (_) => tick());
+    controller.onCancel = () {
+      timer.cancel();
+      controller.close();
+    };
+    return controller.stream;
+  }
+
+  bool _usersEqual(List<AppUser> a, List<AppUser> b) {
+    if (identical(a, b)) return true;
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      final ua = a[i];
+      final ub = b[i];
+      if (ua.id != ub.id) return false;
+      if (ua.username != ub.username) return false;
+      if (ua.photoUrl != ub.photoUrl) return false;
+    }
+    return true;
+  }
+
+  Future<List<AppUser>> searchUsers({
+    required String query,
+    required String excludeUid,
+  }) async {
+    final q = query.trim();
+    if (q.isEmpty) return <AppUser>[];
+    final rows = await AuthService.instance.api
+        .getListOfMaps('/api/users/search?q=${Uri.encodeQueryComponent(q)}');
+    return rows
+        .where((u) => u['id'].toString() != excludeUid)
+        .map((u) => AppUser(
+              id: u['id'].toString(),
+              email: u['email'] as String? ?? '',
+              username: u['username'] as String? ?? '',
+              photoUrl: u['photoUrl'] as String?,
+            ))
+        .toList();
   }
 
   Stream<List<ChatMessage>> watchMessages({required String chatId}) {
-    return _chatsRef
-        .doc(chatId)
-        .collection('messages')
-        .orderBy('createdAt', descending: true)
-        .limit(100)
-        .snapshots()
-        .map((snap) => snap.docs.map((d) => ChatMessage.fromDoc(d)).toList())
-        .handleError((error, stackTrace) {
-      // Keep UI alive if Firestore is temporarily unavailable.
-    });
+    if (!_isBackendChatId(chatId)) {
+      return Stream.value(const <ChatMessage>[]);
+    }
+    final controller = StreamController<List<ChatMessage>>();
+    List<ChatMessage>? last;
+
+    Future<void> tick() async {
+      try {
+        final rows = await AuthService.instance.api
+            .getListOfMaps('/api/chats/$chatId/messages');
+        final next = rows.map(ChatMessage.fromJson).toList();
+        if (last == null || !_messagesEqual(last!, next)) {
+          last = next;
+          controller.add(next);
+        }
+      } catch (_) {
+        // swallow
+      }
+    }
+
+    tick();
+    final timer = Timer.periodic(const Duration(seconds: 6), (_) => tick());
+    controller.onCancel = () {
+      timer.cancel();
+      controller.close();
+    };
+    return controller.stream;
+  }
+
+  bool _messagesEqual(List<ChatMessage> a, List<ChatMessage> b) {
+    if (identical(a, b)) return true;
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      final ma = a[i];
+      final mb = b[i];
+      if (ma.id != mb.id) return false;
+      if (ma.text != mb.text) return false;
+      if (ma.type != mb.type) return false;
+      if (ma.mediaUrl != mb.mediaUrl) return false;
+      if (ma.seenBy.length != mb.seenBy.length) return false;
+    }
+    return true;
+  }
+
+  bool _chatsEqual(List<Chat> a, List<Chat> b) {
+    if (identical(a, b)) return true;
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      final ca = a[i];
+      final cb = b[i];
+      if (ca.id != cb.id) return false;
+      if (ca.lastMessage != cb.lastMessage) return false;
+      if (ca.updatedAt.millisecondsSinceEpoch != cb.updatedAt.millisecondsSinceEpoch) {
+        return false;
+      }
+    }
+    return true;
   }
 
   Future<String> createOrGetDirectChat({
     required AppUser me,
     required AppUser other,
   }) async {
-    final chatId = directChatId(me.id, other.id);
-    final docRef = _chatsRef.doc(chatId);
-
-    await FirebaseFirestore.instance.runTransaction((tx) async {
-      final snap = await tx.get(docRef);
-      if (snap.exists) return;
-
-      tx.set(docRef, {
-        'members': [me.id, other.id],
-        'memberUsernames': {
-          me.id: me.username,
-          other.id: other.username,
-        },
-        'lastMessage': '',
-        'updatedAt': FieldValue.serverTimestamp(),
-      });
-    });
-
-    return chatId;
+    final otherId = int.parse(other.id);
+    final chat = await AuthService.instance.api.postJson(
+      '/api/chats/direct/$otherId',
+      const {},
+      (json) => Chat.fromJson(json),
+    );
+    return chat.id;
   }
 
-   Future<String> createOrGetSelfChat({
+  Future<String> createOrGetSelfChat({
     required AppUser me,
   }) async {
-    final chatId = selfChatId(me.id);
-    final docRef = _chatsRef.doc(chatId);
-
-    await FirebaseFirestore.instance.runTransaction((tx) async {
-      final snap = await tx.get(docRef);
-      if (snap.exists) return;
-
-      tx.set(docRef, {
-        'members': [me.id],
-        'memberUsernames': {
-          me.id: me.username,
-        },
-        'lastMessage': '',
-        'updatedAt': FieldValue.serverTimestamp(),
-      });
-    });
-
-    return chatId;
+    // Backend does not implement explicit self chat; reuse direct with yourself not allowed.
+    return selfChatId(me.id);
   }
 
   Future<void> sendText({
@@ -142,36 +302,16 @@ class ChatService {
     required String senderId,
     required String text,
   }) async {
+    if (!_isBackendChatId(chatId)) return;
     final trimmed = text.trim();
     if (trimmed.isEmpty) return;
-
-    final msgRef = _chatsRef.doc(chatId).collection('messages').doc();
-    final chatRef = _chatsRef.doc(chatId);
-
-    await FirebaseFirestore.instance.runTransaction((tx) async {
-      tx.set(
-        msgRef,
-        ChatMessage(
-          id: msgRef.id,
-          senderId: senderId,
-          type: ChatMessageType.text,
-          text: trimmed,
-          mediaUrl: null,
-          createdAt: DateTime.now(),
-          reactions: const {},
-          seenBy: const [],
-        ).toMap(),
-      );
-
-      tx.set(
-        chatRef,
-        {
-          'lastMessage': trimmed,
-          'updatedAt': FieldValue.serverTimestamp(),
-        },
-        SetOptions(merge: true),
-      );
-    });
+    await AuthService.instance.api.postNoContent(
+      '/api/chats/$chatId/messages',
+      body: {
+        'type': 'text',
+        'text': trimmed,
+      },
+    );
   }
 
   Future<void> sendGif({
@@ -179,33 +319,25 @@ class ChatService {
     required String senderId,
     required String gifUrl,
   }) async {
-    final msgRef = _chatsRef.doc(chatId).collection('messages').doc();
-    final chatRef = _chatsRef.doc(chatId);
-
-    await FirebaseFirestore.instance.runTransaction((tx) async {
-      tx.set(
-        msgRef,
-        ChatMessage(
-          id: msgRef.id,
-          senderId: senderId,
-          type: ChatMessageType.gif,
-          text: '',
-          mediaUrl: gifUrl,
-          createdAt: DateTime.now(),
-          reactions: const {},
-          seenBy: const [],
-        ).toMap(),
-      );
-
-      tx.set(
-        chatRef,
-        {
-          'lastMessage': 'GIF',
-          'updatedAt': FieldValue.serverTimestamp(),
-        },
-        SetOptions(merge: true),
-      );
-    });
+    if (!_isBackendChatId(chatId)) return;
+    if (gifUrl.isEmpty) return;
+    await AuthService.instance.api.postNoContent(
+      '/api/chats/$chatId/messages',
+      body: {
+        'type': 'gif',
+        'mediaUrl': gifUrl,
+      },
+    );
+    //       createdAt: DateTime.now(),
+    //       reactions: {},
+    //       seenBy: [senderId],
+    //     ).toMap(),
+    //   );
+    //   tx.update(chatRef, {
+    //     'lastMessage': 'GIF',
+    //     'updatedAt': FieldValue.serverTimestamp(),
+    //   });
+    // });
   }
 
   Future<void> sendImage({
@@ -213,6 +345,7 @@ class ChatService {
     required String senderId,
     required String imageUrl,
   }) async {
+    if (!_isBackendChatId(chatId)) return;
     await _sendMedia(
       chatId: chatId,
       senderId: senderId,
@@ -227,6 +360,7 @@ class ChatService {
     required String senderId,
     required String videoUrl,
   }) async {
+    if (!_isBackendChatId(chatId)) return;
     await _sendMedia(
       chatId: chatId,
       senderId: senderId,
@@ -241,6 +375,7 @@ class ChatService {
     required String senderId,
     required String fileUrl,
   }) async {
+    if (!_isBackendChatId(chatId)) return;
     await _sendMedia(
       chatId: chatId,
       senderId: senderId,
@@ -255,6 +390,7 @@ class ChatService {
     required String senderId,
     required String audioUrl,
   }) async {
+    if (!_isBackendChatId(chatId)) return;
     await _sendMedia(
       chatId: chatId,
       senderId: senderId,
@@ -264,41 +400,20 @@ class ChatService {
     );
   }
 
-  Future<void> setTyping({
-    required String chatId,
-    required String userId,
-    required bool isTyping,
-  }) async {
-    final chatRef = _chatsRef.doc(chatId);
-    if (isTyping) {
-      await chatRef.set({
-        'typing': {userId: true},
-      }, SetOptions(merge: true));
-    } else {
-      await chatRef.set({
-        'typing': {userId: FieldValue.delete()},
-      }, SetOptions(merge: true));
-    }
-  }
-
   Future<void> markMessagesSeen({
     required String chatId,
     required List<String> messageIds,
     required String userId,
   }) async {
+    if (!_isBackendChatId(chatId)) return;
     if (messageIds.isEmpty) return;
 
-    final chatRef = _chatsRef.doc(chatId);
-    final batch = FirebaseFirestore.instance.batch();
-
-    for (final id in messageIds) {
-      final msgRef = chatRef.collection('messages').doc(id);
-      batch.update(msgRef, {
-        'seenBy': FieldValue.arrayUnion([userId]),
-      });
-    }
-
-    await batch.commit();
+    await AuthService.instance.api.postNoContent(
+      '/api/chats/$chatId/messages/seen',
+      body: {
+        'messageIds': messageIds.map((e) => int.parse(e)).toList(),
+      },
+    );
   }
 
   Future<String> createGroupChat({
@@ -306,33 +421,19 @@ class ChatService {
     required List<AppUser> others,
     required String title,
   }) async {
-    // Ensure current user is included and no duplicates.
-    final allUsersById = <String, AppUser>{
-      for (final u in [me, ...others]) u.id: u,
-    };
-
-    final memberIds = allUsersById.keys.toList();
-    final memberUsernames = <String, String>{
-      for (final entry in allUsersById.entries) entry.key: entry.value.username,
-    };
-
-    final docRef = _chatsRef.doc();
-
-    await FirebaseFirestore.instance.runTransaction((tx) async {
-      final snap = await tx.get(docRef);
-      if (snap.exists) return;
-
-      tx.set(docRef, {
-        'members': memberIds,
-        'memberUsernames': memberUsernames,
-        'lastMessage': '',
-        'updatedAt': FieldValue.serverTimestamp(),
-        'isGroup': true,
+    final memberIds = <int>{int.parse(me.id)};
+    for (final u in others) {
+      memberIds.add(int.parse(u.id));
+    }
+    final chat = await AuthService.instance.api.postJson(
+      '/api/chats/group',
+      {
         'title': title,
-      });
-    });
-
-    return docRef.id;
+        'memberIds': memberIds.where((id) => id != int.parse(me.id)).toList(),
+      },
+      (json) => Chat.fromJson(json),
+    );
+    return chat.id;
   }
 
   Future<void> _sendMedia({
@@ -342,33 +443,46 @@ class ChatService {
     required String mediaUrl,
     required String lastMessageLabel,
   }) async {
-    final msgRef = _chatsRef.doc(chatId).collection('messages').doc();
-    final chatRef = _chatsRef.doc(chatId);
+    if (!_isBackendChatId(chatId)) return;
+    if (mediaUrl.isEmpty) return;
 
-    await FirebaseFirestore.instance.runTransaction((tx) async {
-      tx.set(
-        msgRef,
-        ChatMessage(
-          id: msgRef.id,
-          senderId: senderId,
-          type: type,
-          text: '',
-          mediaUrl: mediaUrl,
-          createdAt: DateTime.now(),
-          reactions: const {},
-          seenBy: const [],
-        ).toMap(),
-      );
+    String typeStr = 'text';
+    if (type == ChatMessageType.gif) typeStr = 'gif';
+    if (type == ChatMessageType.voice) typeStr = 'voice';
+    if (type == ChatMessageType.video) typeStr = 'video';
+    if (type == ChatMessageType.image) typeStr = 'image';
+    if (type == ChatMessageType.file) typeStr = 'file';
 
-      tx.set(
-        chatRef,
-        {
-          'lastMessage': lastMessageLabel,
-          'updatedAt': FieldValue.serverTimestamp(),
-        },
-        SetOptions(merge: true),
-      );
-    });
+    await AuthService.instance.api.postNoContent(
+      '/api/chats/$chatId/messages',
+      body: {
+        'type': typeStr,
+        'mediaUrl': mediaUrl,
+      },
+    );
+    // final msgRef = _chatsRef.doc(chatId).collection('messages').doc();
+    // final chatRef = _chatsRef.doc(chatId);
+
+    // await FirebaseFirestore.instance.runTransaction((tx) async {
+    //   tx.set(
+    //     msgRef,
+    //     ChatMessage(
+    //       id: msgRef.id,
+    //       senderId: senderId,
+    //       senderUsername: '', // TODO: get from backend
+    //       type: type,
+    //       text: '',
+    //       mediaUrl: mediaUrl,
+    //       createdAt: DateTime.now(),
+    //       reactions: const {},
+    //       seenBy: const [],
+    //     ).toMap(),
+    //   );
+    //   tx.update(chatRef, {
+    //     'lastMessage': lastMessageLabel,
+    //     'updatedAt': FieldValue.serverTimestamp(),
+    //   });
+    // });
   }
 
   Future<void> toggleReaction({
@@ -377,34 +491,29 @@ class ChatService {
     required String userId,
     required String emoji,
   }) async {
-    final msgRef =
-        _chatsRef.doc(chatId).collection('messages').doc(messageId);
+    if (!_isBackendChatId(chatId)) return;
+    await AuthService.instance.api.postNoContent(
+      '/api/chats/$chatId/messages/$messageId/reactions/${Uri.encodeComponent(emoji)}',
+    );
+    // final msgRef =
+    //     _chatsRef.doc(chatId).collection('messages').doc(messageId);
 
-    await FirebaseFirestore.instance.runTransaction((tx) async {
-      final snap = await tx.get(msgRef);
-      if (!snap.exists) return;
+    // await FirebaseFirestore.instance.runTransaction((tx) async {
+    //   final snap = await tx.get(msgRef);
+    //   if (!snap.exists) return;
 
-      final data = snap.data() ?? <String, dynamic>{};
-      final reactionsRaw = data['reactions'] as Map<String, dynamic>? ?? {};
+    //   final data = snap.data()!;
+    //   final reactions = ChatMessage._decodeReactions(data['reactions'] ?? {});
 
-      final currentList = List<String>.from(
-        (reactionsRaw[emoji] as List<dynamic>? ?? const []),
-      );
+    //   final userReactions = reactions[emoji] ?? [];
+    //   if (userReactions.contains(userId)) {
+    //     userReactions.remove(userId);
+    //   } else {
+    //     userReactions.add(userId);
+    //   }
+    //   reactions[emoji] = userReactions;
 
-      if (currentList.contains(userId)) {
-        currentList.remove(userId);
-      } else {
-        currentList.add(userId);
-      }
-
-      final updated = Map<String, dynamic>.from(reactionsRaw);
-      if (currentList.isEmpty) {
-        updated.remove(emoji);
-      } else {
-        updated[emoji] = currentList;
-      }
-
-      tx.update(msgRef, {'reactions': updated});
-    });
+    //   await tx.update(msgRef, {'reactions': ChatMessage._encodeReactions(reactions)});
+    // });
   }
 }

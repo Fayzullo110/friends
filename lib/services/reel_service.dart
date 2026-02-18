@@ -1,27 +1,79 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'dart:async';
 
 import '../models/reel.dart';
+import 'auth_service.dart';
 
 class ReelService {
   ReelService._();
 
   static final ReelService instance = ReelService._();
 
-  final _reelsRef = FirebaseFirestore.instance
-      .collection('reels')
-      .withConverter<Reel>(
-        fromFirestore: (doc, _) => Reel.fromDoc(doc),
-        toFirestore: (reel, _) => reel.toMap(),
-      );
-
   Stream<List<Reel>> watchReels() {
-    return _reelsRef
-        .orderBy('createdAt', descending: true)
-        .snapshots()
-        .map((snap) => snap.docs.map((d) => d.data()).toList())
-        .handleError((error, stackTrace) {
-      // Keep UI alive if Firestore is temporarily unavailable.
-    });
+    final controller = StreamController<List<Reel>>();
+    List<Reel>? last;
+
+    Future<void> tick() async {
+      try {
+        final rows = await AuthService.instance.api.getListOfMaps('/api/reels');
+        final next = rows.map(Reel.fromJson).toList();
+        if (last == null || !_reelsEqual(last!, next)) {
+          last = next;
+          controller.add(next);
+        }
+      } catch (_) {
+        // swallow errors
+      }
+    }
+
+    tick();
+    final timer = Timer.periodic(const Duration(seconds: 10), (_) => tick());
+    controller.onCancel = () {
+      timer.cancel();
+      controller.close();
+    };
+    return controller.stream;
+  }
+
+  Stream<List<Reel>> watchArchivedReels({required String uid}) {
+    final controller = StreamController<List<Reel>>();
+    List<Reel>? last;
+
+    Future<void> tick() async {
+      try {
+        final rows = await AuthService.instance.api.getListOfMaps('/api/reels/archived');
+        final next = rows.map(Reel.fromJson).toList();
+        if (last == null || !_reelsEqual(last!, next)) {
+          last = next;
+          controller.add(next);
+        }
+      } catch (_) {
+        // swallow
+      }
+    }
+
+    tick();
+    final timer = Timer.periodic(const Duration(seconds: 12), (_) => tick());
+    controller.onCancel = () {
+      timer.cancel();
+      controller.close();
+    };
+    return controller.stream;
+  }
+
+  bool _reelsEqual(List<Reel> a, List<Reel> b) {
+    if (identical(a, b)) return true;
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      final ra = a[i];
+      final rb = b[i];
+      if (ra.id != rb.id) return false;
+      if (ra.likeCount != rb.likeCount) return false;
+      if (ra.commentCount != rb.commentCount) return false;
+      if (ra.shareCount != rb.shareCount) return false;
+      if (ra.caption != rb.caption) return false;
+      if (ra.mediaUrl != rb.mediaUrl) return false;
+    }
+    return true;
   }
 
   Future<void> createTextReel({
@@ -29,63 +81,46 @@ class ReelService {
     required String authorUsername,
     required String caption,
   }) async {
-    final now = DateTime.now();
-    final reel = Reel(
-      id: '',
-      authorId: authorId,
-      authorUsername: authorUsername,
-      caption: caption,
-      mediaUrl: null,
-      mediaType: 'text',
-      likeCount: 0,
-      commentCount: 0,
-      createdAt: now,
+    await AuthService.instance.api.postNoContent(
+      '/api/reels',
+      body: {
+        'caption': caption,
+        'mediaType': 'text',
+      },
     );
-
-    await _reelsRef.add(reel);
   }
 
   Future<void> toggleLike({
     required String reelId,
     required String userId,
   }) async {
-    final ref = FirebaseFirestore.instance.collection('reels').doc(reelId);
-
-    await FirebaseFirestore.instance.runTransaction((tx) async {
-      final snap = await tx.get(ref);
-      if (!snap.exists) return;
-
-      final data = snap.data();
-      final likedBy = List<String>.from(
-        (data?['likedBy'] as List<dynamic>? ?? const []).map((e) => e as String),
-      );
-      var likeCount = data?['likeCount'] as int? ?? 0;
-
-      if (likedBy.contains(userId)) {
-        likedBy.remove(userId);
-        likeCount = likeCount > 0 ? likeCount - 1 : 0;
-      } else {
-        likedBy.add(userId);
-        likeCount += 1;
-      }
-
-      tx.update(ref, {
-        'likedBy': likedBy,
-        'likeCount': likeCount,
-      });
-    });
+    await AuthService.instance.api.postNoContent('/api/reels/$reelId/like');
   }
 
   Future<void> incrementShareCount({required String reelId}) async {
-    final docRef = FirebaseFirestore.instance.collection('reels').doc(reelId);
-    try {
-      await docRef.update({'shareCount': FieldValue.increment(1)});
-    } on FirebaseException catch (e) {
-      if (e.code == 'unavailable') {
-        return;
-      }
-      rethrow;
-    }
+    await AuthService.instance.api.postNoContent('/api/reels/$reelId/share');
+  }
+
+  Future<Reel> updateReel({required String reelId, required String caption}) async {
+    final trimmed = caption.trim();
+    if (trimmed.isEmpty) throw Exception('Caption cannot be empty');
+    return await AuthService.instance.api.patchJson(
+      '/api/reels/$reelId',
+      {'caption': trimmed},
+      (json) => Reel.fromJson(json),
+    );
+  }
+
+  Future<void> archiveReel({required String reelId}) async {
+    await AuthService.instance.api.postNoContent('/api/reels/$reelId/archive');
+  }
+
+  Future<void> restoreReel({required String reelId}) async {
+    await AuthService.instance.api.postNoContent('/api/reels/$reelId/restore');
+  }
+
+  Future<void> deleteReel({required String reelId}) async {
+    await AuthService.instance.api.deleteNoContent('/api/reels/$reelId');
   }
 
   Future<void> repost({
@@ -93,28 +128,14 @@ class ReelService {
     required String newAuthorId,
     required String newAuthorUsername,
   }) async {
-    final sourceRef = FirebaseFirestore.instance.collection('reels').doc(sourceReelId);
-    final snap = await sourceRef.get();
-    if (!snap.exists) return;
-
-    final data = snap.data() ?? <String, dynamic>{};
-
-    final now = DateTime.now();
-    final reel = Reel(
-      id: '',
-      authorId: newAuthorId,
-      authorUsername: newAuthorUsername,
-      caption: data['caption'] as String? ?? '',
-      mediaUrl: data['mediaUrl'] as String?,
-      mediaType: data['mediaType'] as String? ?? 'video',
-      likeCount: 0,
-      commentCount: 0,
-      shareCount: 0,
-      createdAt: now,
-    );
-
-    await _reelsRef.add(reel);
-
+    // Backend doesn't currently support repost; treat as share for now.
     await incrementShareCount(reelId: sourceReelId);
+  }
+
+  Future<Reel> getReelById({required String reelId}) async {
+    return await AuthService.instance.api.getJson(
+      '/api/reels/$reelId',
+      (json) => Reel.fromJson(json),
+    );
   }
 }

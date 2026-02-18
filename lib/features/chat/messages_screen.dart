@@ -1,6 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:firebase_auth/firebase_auth.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 
 import 'chat_detail_screen.dart';
 import 'new_message_screen.dart';
@@ -9,8 +7,10 @@ import '../status/create_status_screen.dart';
 import '../status/status_viewer_screen.dart';
 import '../../models/chat.dart';
 import '../../models/user_status.dart';
+import '../../models/app_user.dart';
 import '../../services/chat_service.dart';
 import '../../services/auth_service.dart';
+import '../../services/follow_service.dart';
 import '../../services/user_status_service.dart';
 import '../../theme/ios_icons.dart';
 
@@ -28,8 +28,8 @@ class _MessagesScreenState extends State<MessagesScreen> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
 
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null) {
+    final me = AuthService.instance.currentUser;
+    if (me == null) {
       return Scaffold(
         appBar: AppBar(title: const Text('Messages')),
         body: const Center(child: Text('Please log in to use messages.')),
@@ -103,7 +103,7 @@ class _MessagesScreenState extends State<MessagesScreen> {
                   ),
                 ),
                 Expanded(
-                  child: _buildFriendsRow(context, theme, user.uid),
+                  child: _buildFriendsRow(context, theme, me.id),
                 ),
               ],
             ),
@@ -122,7 +122,7 @@ class _MessagesScreenState extends State<MessagesScreen> {
           ),
           Expanded(
             child: StreamBuilder<List<Chat>>(
-              stream: ChatService.instance.watchMyChats(uid: user.uid),
+              stream: ChatService.instance.watchMyChats(uid: me.id),
               builder: (context, snapshot) {
                 var chats = snapshot.data ?? [];
                 if (_filter == 'chats') {
@@ -150,36 +150,47 @@ class _MessagesScreenState extends State<MessagesScreen> {
                     }
                     final c = chats[index - 1];
                     final otherId = c.members.firstWhere(
-                      (m) => m != user.uid,
-                      orElse: () => user.uid,
+                      (m) => m != me.id,
+                      orElse: () => me.id,
                     );
                     final title = c.memberUsernames[otherId] ?? 'Chat';
 
                     return ListTile(
                       contentPadding:
                           const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-                      leading: FutureBuilder<
-                          DocumentSnapshot<Map<String, dynamic>>>(
-                        future: FirebaseFirestore.instance
-                            .collection('users')
-                            .doc(otherId)
-                            .get(),
-                        builder: (context, snap) {
-                          String? photoUrl;
-                          if (snap.hasData && snap.data!.exists) {
-                            final data = snap.data!.data();
-                            photoUrl = data?['photoUrl'] as String?;
-                          }
-                          return CircleAvatar(
-                            radius: 22,
-                            backgroundColor: theme.colorScheme.primary
-                                .withOpacity(0.08),
-                            backgroundImage: (photoUrl != null &&
-                                    photoUrl.isNotEmpty)
-                                ? NetworkImage(photoUrl)
-                                : null,
-                            child: (photoUrl == null || photoUrl.isEmpty)
-                                ? Text(
+                      leading: c.isGroup
+                          ? CircleAvatar(
+                              radius: 22,
+                              backgroundColor: theme.colorScheme.primary
+                                  .withOpacity(0.08),
+                              child: Text(
+                                title.isNotEmpty
+                                    ? title[0].toUpperCase()
+                                    : 'C',
+                                style: TextStyle(
+                                  color: theme.colorScheme.primary,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            )
+                          : FutureBuilder<AppUser>(
+                              future: AuthService.instance.api.getJson(
+                                '/api/users/$otherId',
+                                (json) => AppUser.fromJson(json),
+                              ),
+                              builder: (context, snap) {
+                                final u = snap.data;
+                                final photoUrl = u?.photoUrl;
+                                return CircleAvatar(
+                                  radius: 22,
+                                  backgroundColor: theme
+                                      .colorScheme.primary
+                                      .withOpacity(0.08),
+                                  foregroundImage:
+                                      (photoUrl != null && photoUrl.isNotEmpty)
+                                          ? NetworkImage(photoUrl)
+                                          : null,
+                                  child: Text(
                                     title.isNotEmpty
                                         ? title[0].toUpperCase()
                                         : 'C',
@@ -187,11 +198,10 @@ class _MessagesScreenState extends State<MessagesScreen> {
                                       color: theme.colorScheme.primary,
                                       fontWeight: FontWeight.w600,
                                     ),
-                                  )
-                                : null,
-                          );
-                        },
-                      ),
+                                  ),
+                                );
+                              },
+                            ),
                       title: Text(
                         title,
                         style: const TextStyle(fontWeight: FontWeight.w600),
@@ -220,6 +230,7 @@ class _MessagesScreenState extends State<MessagesScreen> {
                             builder: (_) => ChatDetailScreen(
                               chatId: c.id,
                               title: title,
+                              otherUserId: c.isGroup ? null : otherId,
                             ),
                           ),
                         );
@@ -307,11 +318,7 @@ class _MessagesScreenState extends State<MessagesScreen> {
 
   Future<List<String>> _getFollowingIds(String userId) async {
     try {
-      final snap = await FirebaseFirestore.instance
-          .collection('follows')
-          .where('fromUserId', isEqualTo: userId)
-          .get();
-      return snap.docs.map((d) => d.data()['toUserId'] as String).toList();
+      return await FollowService.instance.getFollowingOnce(uid: userId);
     } catch (e) {
       return [];
     }
@@ -400,8 +407,8 @@ class _MessagesScreenState extends State<MessagesScreen> {
 
   Widget _buildStatusItem(BuildContext context, ThemeData theme, UserStatus status) {
     final isDark = theme.brightness == Brightness.dark;
-    final currentUser = FirebaseAuth.instance.currentUser;
-    final isSeen = currentUser != null && status.seenBy.contains(currentUser.uid);
+    final currentUserId = AuthService.instance.currentUser?.id;
+    final isSeen = currentUserId != null && status.seenBy.contains(currentUserId);
 
     return GestureDetector(
       onTap: () {
@@ -482,8 +489,8 @@ class _MessagesScreenState extends State<MessagesScreen> {
       subtitle: const Text('Your private space'),
       onTap: () async {
         try {
-          final authUser = FirebaseAuth.instance.currentUser;
-          if (authUser == null) {
+          final meNow = AuthService.instance.currentUser;
+          if (meNow == null) {
             if (!context.mounted) return;
             ScaffoldMessenger.of(context).showSnackBar(
               const SnackBar(
@@ -504,8 +511,7 @@ class _MessagesScreenState extends State<MessagesScreen> {
             return;
           }
 
-          final chatId =
-              await ChatService.instance.createOrGetSelfChat(me: me);
+          final chatId = await ChatService.instance.createOrGetSelfChat(me: me);
           if (!context.mounted) return;
           Navigator.of(context).push(
             MaterialPageRoute(

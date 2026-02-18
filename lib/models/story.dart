@@ -1,5 +1,3 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
-
 class Story {
   final String id;
   final String authorId;
@@ -31,24 +29,27 @@ class Story {
     this.musicUrl,
   });
 
-  factory Story.fromDoc(DocumentSnapshot<Map<String, dynamic>> doc) {
-    final data = doc.data() ?? <String, dynamic>{};
+  factory Story.fromJson(Map<String, dynamic> data) {
     return Story(
-      id: doc.id,
-      authorId: data['authorId'] as String? ?? '',
+      id: data['id'].toString(),
+      authorId: data['authorId'].toString(),
       authorUsername: data['authorUsername'] as String? ?? '',
       mediaUrl: data['mediaUrl'] as String?,
       mediaType: data['mediaType'] as String? ?? 'text',
       text: data['text'] as String?,
-      createdAt:
-          (data['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
-      expiresAt:
-          (data['expiresAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
-      seenBy: (data['seenBy'] as List<dynamic>? ?? [])
-          .map((e) => e as String)
+      createdAt: DateTime.fromMillisecondsSinceEpoch(
+        (data['createdAt'] as num?)?.toInt() ?? 0,
+        isUtc: false,
+      ),
+      expiresAt: DateTime.fromMillisecondsSinceEpoch(
+        (data['expiresAt'] as num?)?.toInt() ?? 0,
+        isUtc: false,
+      ),
+      seenBy: (data['seenBy'] as List<dynamic>? ?? const [])
+          .map((e) => e.toString())
           .toList(),
-      likedBy: (data['likedBy'] as List<dynamic>? ?? [])
-          .map((e) => e as String)
+      likedBy: (data['likedBy'] as List<dynamic>? ?? const [])
+          .map((e) => e.toString())
           .toList(),
       musicTitle: data['musicTitle'] as String?,
       musicArtist: data['musicArtist'] as String?,
@@ -56,15 +57,16 @@ class Story {
     );
   }
 
-  Map<String, dynamic> toMap() {
+  Map<String, dynamic> toJson() {
     return {
+      'id': id,
       'authorId': authorId,
       'authorUsername': authorUsername,
       'mediaUrl': mediaUrl,
       'mediaType': mediaType,
       'text': text,
-      'createdAt': Timestamp.fromDate(createdAt),
-      'expiresAt': Timestamp.fromDate(expiresAt),
+      'createdAt': createdAt.millisecondsSinceEpoch,
+      'expiresAt': expiresAt.millisecondsSinceEpoch,
       'seenBy': seenBy,
       'likedBy': likedBy,
       'musicTitle': musicTitle,

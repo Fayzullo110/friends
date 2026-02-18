@@ -3,8 +3,9 @@ import 'dart:html' as html;
 import 'dart:js' as js;
 import 'dart:ui_web' as ui;
 
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+
+import '../../services/auth_service.dart';
 
 class JitsiCallScreenImpl extends StatefulWidget {
   final String roomName;
@@ -26,6 +27,7 @@ class _JitsiCallScreenImplState extends State<JitsiCallScreenImpl> {
   bool _micMuted = false;
   bool _camMuted = false;
   bool _speakerOn = true;
+  String? _initError;
 
   @override
   void initState() {
@@ -100,7 +102,10 @@ class _JitsiCallScreenImplState extends State<JitsiCallScreenImpl> {
 
     final completer = Completer<void>();
     script.onLoad.listen((_) => completer.complete());
-    script.onError.listen((_) => completer.complete());
+    script.onError.listen((_) {
+      _initError ??= 'Failed to load Jitsi external_api.js';
+      completer.complete();
+    });
 
     html.document.head?.append(script);
     await completer.future;
@@ -110,8 +115,8 @@ class _JitsiCallScreenImplState extends State<JitsiCallScreenImpl> {
     if (_initialized) return;
     _initialized = true;
 
-    final user = FirebaseAuth.instance.currentUser;
-    final displayName = user?.email?.split('@').first ?? user?.displayName ?? 'user';
+    final me = AuthService.instance.currentUser;
+    final displayName = me?.email.split('@').first ?? me?.username ?? 'user';
 
     final options = js.JsObject.jsify({
       'roomName': widget.roomName,
@@ -123,7 +128,11 @@ class _JitsiCallScreenImplState extends State<JitsiCallScreenImpl> {
 
     try {
       final api = js.context['JitsiMeetExternalAPI'] as js.JsFunction?;
-      if (api == null) return;
+      if (api == null) {
+        _initError ??= 'JitsiMeetExternalAPI is not available (script blocked?)';
+        if (mounted) setState(() {});
+        return;
+      }
 
       js.context['jitsiApi'] = js.JsObject(api, ['meet.jit.si', options]);
 
@@ -160,12 +169,17 @@ class _JitsiCallScreenImplState extends State<JitsiCallScreenImpl> {
         ]);
       }
     } catch (_) {
-      // keep UI alive
+      _initError ??= 'Failed to initialize Jitsi call';
     }
 
     if (mounted) {
       setState(() {});
     }
+  }
+
+  void _openInNewTab() {
+    final url = 'https://meet.jit.si/${widget.roomName}';
+    html.window.open(url, '_blank');
   }
 
   Future<void> _shareScreen() async {
@@ -273,7 +287,35 @@ class _JitsiCallScreenImplState extends State<JitsiCallScreenImpl> {
           ),
         ],
       ),
-      body: HtmlElementView(viewType: _viewType),
+      body: Stack(
+        children: [
+          HtmlElementView(viewType: _viewType),
+          if (_initError != null)
+            Positioned.fill(
+              child: Container(
+                color: Colors.black.withOpacity(0.75),
+                padding: const EdgeInsets.all(16),
+                child: Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        _initError!,
+                        style: const TextStyle(color: Colors.white),
+                        textAlign: TextAlign.center,
+                      ),
+                      const SizedBox(height: 12),
+                      FilledButton(
+                        onPressed: _openInNewTab,
+                        child: const Text('Open in browser'),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
     );
   }
 }

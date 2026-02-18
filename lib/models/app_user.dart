@@ -1,5 +1,3 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
-
 class AppUser {
   final String id;
   final String email;
@@ -37,26 +35,26 @@ class AppUser {
     this.lastActiveAt,
   });
 
-  factory AppUser.fromDoc(DocumentSnapshot<Map<String, dynamic>> doc) {
-    final data = doc.data() ?? {};
+  factory AppUser.fromJson(Map<String, dynamic> json) {
     return AppUser(
-      id: doc.id,
-      email: data['email'] ?? '',
-      username: data['username'] ?? '',
-      displayName: data['displayName'],
-      photoUrl: data['photoUrl'],
-      backgroundImageUrl: data['backgroundImageUrl'],
-      bio: data['bio'],
-      followersCount: (data['followersCount'] as num?)?.toInt(),
-      followingCount: (data['followingCount'] as num?)?.toInt(),
-      firstName: data['firstName'],
-      lastName: data['lastName'],
-      age: (data['age'] as num?)?.toInt(),
-      isOfficial: data['isOfficial'] as bool? ?? false,
-      badgeType: data['badgeType'] as String?,
-      isOnline: data['isOnline'] as bool? ?? false,
-      lastActiveAt:
-          (data['lastActiveAt'] as Timestamp?)?.toDate(),
+      id: json['id'].toString(),
+      email: json['email'] as String,
+      username: json['username'] as String,
+      displayName: json['displayName'] as String?,
+      photoUrl: json['photoUrl'] as String?,
+      backgroundImageUrl: json['backgroundImageUrl'] as String?,
+      bio: json['bio'] as String?,
+      followersCount: (json['followersCount'] as num?)?.toInt(),
+      followingCount: (json['followingCount'] as num?)?.toInt(),
+      firstName: json['firstName'] as String?,
+      lastName: json['lastName'] as String?,
+      age: (json['age'] as num?)?.toInt(),
+      isOfficial: json['isOfficial'] as bool? ?? false,
+      badgeType: json['badgeType'] as String?,
+      isOnline: json['isOnline'] as bool? ?? false,
+      lastActiveAt: json['lastActiveAt'] != null
+          ? DateTime.parse(json['lastActiveAt'] as String)
+          : null,
     );
   }
 
@@ -76,9 +74,7 @@ class AppUser {
       'isOfficial': isOfficial,
       'badgeType': badgeType,
       'isOnline': isOnline,
-      'lastActiveAt': lastActiveAt != null
-          ? Timestamp.fromDate(lastActiveAt!)
-          : null,
+      'lastActiveAt': lastActiveAt?.toIso8601String(),
     };
   }
 }

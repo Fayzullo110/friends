@@ -1,4 +1,3 @@
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 import '../../services/auth_service.dart';
@@ -25,6 +24,8 @@ class _SignUpScreenState extends State<SignUpScreen> {
   final _ageController = TextEditingController();
   bool _isLoading = false;
   bool _checkingUsername = false;
+  bool _obscurePassword = true;
+  bool _obscureConfirmPassword = true;
   String? _usernameStatus;
   Color? _usernameStatusColor;
   List<String> _usernameSuggestions = const [];
@@ -73,10 +74,10 @@ class _SignUpScreenState extends State<SignUpScreen> {
         age: computedAge,
       );
       debugPrint('Signed up as: ${user.email}');
-    } on FirebaseAuthException catch (e) {
-      // Log the raw Firebase error for debugging.
-      debugPrint('Sign up error: \\${e.code} - \\${e.message}');
-      final message = _mapAuthError(e);
+    } on Exception catch (e) {
+      // Log the raw error for debugging.
+      debugPrint('Sign up error: $e');
+      final message = e.toString().replaceFirst('Exception: ', '');
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(message)),
       );
@@ -439,10 +440,22 @@ class _SignUpScreenState extends State<SignUpScreen> {
                             const SizedBox(height: 16),
                             TextFormField(
                               controller: _passwordController,
-                              obscureText: true,
-                              decoration: const InputDecoration(
+                              obscureText: _obscurePassword,
+                              decoration: InputDecoration(
                                 labelText: 'Password',
-                                border: OutlineInputBorder(),
+                                border: const OutlineInputBorder(),
+                                suffixIcon: IconButton(
+                                  icon: Icon(
+                                    _obscurePassword
+                                        ? IOSIcons.eyeSlash
+                                        : IOSIcons.eye,
+                                  ),
+                                  onPressed: () {
+                                    setState(() {
+                                      _obscurePassword = !_obscurePassword;
+                                    });
+                                  },
+                                ),
                               ),
                           validator: (value) {
                             if (value == null || value.length < 6) {
@@ -454,10 +467,23 @@ class _SignUpScreenState extends State<SignUpScreen> {
                             const SizedBox(height: 16),
                             TextFormField(
                               controller: _confirmPasswordController,
-                              obscureText: true,
-                              decoration: const InputDecoration(
+                              obscureText: _obscureConfirmPassword,
+                              decoration: InputDecoration(
                                 labelText: 'Confirm password',
-                                border: OutlineInputBorder(),
+                                border: const OutlineInputBorder(),
+                                suffixIcon: IconButton(
+                                  icon: Icon(
+                                    _obscureConfirmPassword
+                                        ? IOSIcons.eyeSlash
+                                        : IOSIcons.eye,
+                                  ),
+                                  onPressed: () {
+                                    setState(() {
+                                      _obscureConfirmPassword =
+                                          !_obscureConfirmPassword;
+                                    });
+                                  },
+                                ),
                               ),
                           validator: (value) {
                             if (value != _passwordController.text) {
@@ -506,9 +532,30 @@ class _SignUpScreenState extends State<SignUpScreen> {
                                 mainAxisAlignment: MainAxisAlignment.center,
                                 children: [
                                   OutlinedButton.icon(
-                                    onPressed: () {
-                                      // TODO: Wire Google sign-in.
-                                    },
+                                    onPressed: _isLoading
+                                        ? null
+                                        : () async {
+                                            setState(() => _isLoading = true);
+                                            try {
+                                              await AuthService.instance
+                                                  .signInWithGoogle();
+                                            } catch (e) {
+                                              if (!context.mounted) return;
+                                              ScaffoldMessenger.of(context)
+                                                  .showSnackBar(
+                                                SnackBar(
+                                                  content: Text(
+                                                    'Google sign-in failed: $e',
+                                                  ),
+                                                ),
+                                              );
+                                            } finally {
+                                              if (mounted) {
+                                                setState(
+                                                    () => _isLoading = false);
+                                              }
+                                            }
+                                          },
                                     style: OutlinedButton.styleFrom(
                                       shape: RoundedRectangleBorder(
                                         borderRadius:
@@ -517,20 +564,6 @@ class _SignUpScreenState extends State<SignUpScreen> {
                                     ),
                                     icon: const Icon(IOSIcons.add), // Using add icon for Google G placeholder
                                     label: const Text('Google'),
-                                  ),
-                                  const SizedBox(width: 12),
-                                  OutlinedButton.icon(
-                                    onPressed: () {
-                                      // TODO: Wire Facebook sign-in.
-                                    },
-                                    style: OutlinedButton.styleFrom(
-                                      shape: RoundedRectangleBorder(
-                                        borderRadius:
-                                            BorderRadius.circular(999),
-                                      ),
-                                    ),
-                                    icon: const Icon(IOSIcons.personAdd), // Using person add for Facebook placeholder
-                                    label: const Text('Facebook'),
                                   ),
                                 ],
                               ),
@@ -547,23 +580,5 @@ class _SignUpScreenState extends State<SignUpScreen> {
         ),
       ),
     );
-  }
-
-  String _mapAuthError(FirebaseAuthException e) {
-    switch (e.code) {
-      case 'username-already-in-use':
-        return 'That username is already taken. Please choose another one.';
-      case 'email-already-in-use':
-        return 'An account already exists for that email.';
-      case 'invalid-email':
-        return 'The email address is not valid.';
-      case 'weak-password':
-        return 'Password is too weak. Please choose a stronger one.';
-      case 'operation-not-allowed':
-        return 'Email/password sign up is not enabled.';
-      default:
-        // Include the code so we can see what is happening during development.
-        return 'Sign up failed (code: \\${e.code}). Please try again.';
-    }
   }
 }

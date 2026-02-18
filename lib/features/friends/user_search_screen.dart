@@ -1,12 +1,11 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 
 import '../../l10n/app_localizations.dart';
 import '../../models/app_user.dart';
 import '../../services/auth_service.dart';
-import '../../services/follow_service.dart';
+import '../../services/friend_service.dart';
 import '../../services/block_service.dart';
 import '../profile/user_profile_screen.dart';
 
@@ -48,11 +47,11 @@ class _UserSearchScreenState extends State<UserSearchScreen> {
 
       // If logged in, filter out users I have blocked AND users who have
       // blocked me (best-effort using Firestore reads per user).
-      final current = FirebaseAuth.instance.currentUser;
+      final current = AuthService.instance.currentUser;
       List<AppUser> visibleUsers = users;
       if (current != null) {
         final myBlockedIds =
-            await BlockService.instance.getBlockedOnce(uid: current.uid);
+            await BlockService.instance.getBlockedOnce(uid: current.id);
 
         final futures = users.map((u) async {
           // Skip users I have blocked.
@@ -63,7 +62,7 @@ class _UserSearchScreenState extends State<UserSearchScreen> {
           // Check if this user has blocked me.
           final blockedMe = await BlockService.instance.isBlocked(
             fromUserId: u.id,
-            toUserId: current.uid,
+            toUserId: current.id,
           );
           return blockedMe ? null : u;
         }).toList();
@@ -200,7 +199,7 @@ class _FollowButton extends StatefulWidget {
 
 class _FollowButtonState extends State<_FollowButton> {
   bool _loading = false;
-  bool? _isFollowing;
+  bool _sent = false;
 
   @override
   void didChangeDependencies() {
@@ -209,42 +208,14 @@ class _FollowButtonState extends State<_FollowButton> {
   }
 
   Future<void> _loadInitial() async {
-    final current = FirebaseAuth.instance.currentUser;
-    if (current == null) return;
-
-    setState(() {
-      _loading = true;
-    });
-
-    try {
-      final me = await AuthService.instance.userChanges.firstWhere(
-        (u) => u != null,
-      );
-      if (me == null) return;
-
-      final isFollowing = await FollowService.instance.isFollowing(
-        fromUserId: me.id,
-        toUserId: widget.user.id,
-      );
-
-      if (!mounted) return;
-      setState(() {
-        _isFollowing = isFollowing;
-      });
-    } finally {
-      if (mounted) {
-        setState(() {
-          _loading = false;
-        });
-      }
-    }
+    return;
   }
 
   Future<void> _toggle() async {
-    final current = FirebaseAuth.instance.currentUser;
+    final current = AuthService.instance.currentUser;
     if (current == null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please log in to follow users.')),
+        const SnackBar(content: Text('Please log in to add friends.')),
       );
       return;
     }
@@ -259,27 +230,20 @@ class _FollowButtonState extends State<_FollowButton> {
       );
       if (me == null) return;
 
-      final currentlyFollowing = _isFollowing ?? false;
-      if (currentlyFollowing) {
-        await FollowService.instance.unfollow(
-          fromUserId: me.id,
-          toUserId: widget.user.id,
-        );
-      } else {
-        await FollowService.instance.follow(
-          fromUserId: me.id,
-          toUserId: widget.user.id,
-        );
-      }
+      await FriendService.instance.sendRequest(
+        fromUserId: me.id,
+        fromUsername: me.username,
+        toUserId: widget.user.id,
+      );
 
       if (!mounted) return;
       setState(() {
-        _isFollowing = !currentlyFollowing;
+        _sent = true;
       });
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to update follow state: $e')),
+        SnackBar(content: Text('Failed to send request: $e')),
       );
     } finally {
       if (mounted) {
@@ -292,7 +256,6 @@ class _FollowButtonState extends State<_FollowButton> {
 
   @override
   Widget build(BuildContext context) {
-    final isFollowing = _isFollowing ?? false;
     return TextButton.icon(
       onPressed: _loading ? null : _toggle,
       icon: _loading
@@ -301,8 +264,8 @@ class _FollowButtonState extends State<_FollowButton> {
               height: 16,
               child: CircularProgressIndicator(strokeWidth: 2),
             )
-          : Icon(isFollowing ? Icons.check : Icons.person_add_alt_1),
-      label: Text(isFollowing ? 'Friends' : 'Add friend'),
+          : Icon(_sent ? Icons.check : Icons.person_add_alt_1),
+      label: Text(_sent ? 'Request sent' : 'Add friend'),
     );
   }
 }

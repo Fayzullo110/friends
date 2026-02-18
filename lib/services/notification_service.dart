@@ -1,51 +1,74 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'dart:async';
+
+import 'package:flutter/foundation.dart';
 
 import '../models/app_notification.dart';
 import 'block_service.dart';
+import 'auth_service.dart';
 
 class NotificationService {
   NotificationService._();
 
   static final NotificationService instance = NotificationService._();
 
-  CollectionReference<Map<String, dynamic>> _itemsRef(String uid) {
-    return FirebaseFirestore.instance
-        .collection('notifications')
-        .doc(uid)
-        .collection('items');
-  }
-
   Stream<List<AppNotification>> watchMyNotifications({required String uid}) {
-    return _itemsRef(uid)
-        .orderBy('createdAt', descending: true)
-        .limit(50)
-        .snapshots()
-        .map(
-          (snap) => snap.docs
-              .map((d) => AppNotification.fromDoc(d))
-              .toList(),
-        )
-        .handleError((error, stackTrace) {
-      // Keep UI alive if Firestore is temporarily unavailable.
-    });
+    final controller = StreamController<List<AppNotification>>();
+    List<AppNotification>? last;
+
+    Future<void> tick() async {
+      try {
+        final rows = await AuthService.instance.api.getListOfMaps('/api/notifications');
+        final next = rows.map(AppNotification.fromJson).toList();
+        if (last == null || !_equals(last!, next)) {
+          last = next;
+          controller.add(next);
+        }
+      } catch (e) {
+        debugPrint('[NotificationService] Failed to fetch notifications: $e');
+        if (!controller.isClosed) {
+          controller.addError(e);
+        }
+      }
+    }
+
+    tick();
+    final timer = Timer.periodic(const Duration(seconds: 15), (_) => tick());
+    controller.onCancel = () {
+      timer.cancel();
+      controller.close();
+    };
+    return controller.stream;
   }
 
   Stream<List<AppNotification>> watchMyUnreadNotifications({
     required String uid,
   }) {
-    return _itemsRef(uid)
-        .where('isRead', isEqualTo: false)
-        .orderBy('createdAt', descending: true)
-        .limit(50)
-        .snapshots()
-        .map(
-          (snap) => snap.docs
-              .map((d) => AppNotification.fromDoc(d))
-              .toList(),
-        )
-        .handleError((error, stackTrace) {
-      // Keep UI alive if Firestore is temporarily unavailable.
-    });
+    final controller = StreamController<List<AppNotification>>();
+    List<AppNotification>? last;
+
+    Future<void> tick() async {
+      try {
+        final rows = await AuthService.instance.api.getListOfMaps('/api/notifications/unread');
+        final next = rows.map(AppNotification.fromJson).toList();
+        if (last == null || !_equals(last!, next)) {
+          last = next;
+          controller.add(next);
+        }
+      } catch (e) {
+        debugPrint('[NotificationService] Failed to fetch unread notifications: $e');
+        if (!controller.isClosed) {
+          controller.addError(e);
+        }
+      }
+    }
+
+    tick();
+    final timer = Timer.periodic(const Duration(seconds: 15), (_) => tick());
+    controller.onCancel = () {
+      timer.cancel();
+      controller.close();
+    };
+    return controller.stream;
   }
 
   Future<void> createNotification({
@@ -55,7 +78,8 @@ class NotificationService {
     required String fromUsername,
     String? postId,
   }) async {
-    if (toUserId.isEmpty) return;
+    // if (toUserId.isEmpty) return;
+    // if (toUserId == fromUserId) return;
     if (toUserId == fromUserId) return;
 
     // If the receiver has blocked the sender, silently skip the notification.
@@ -65,33 +89,47 @@ class NotificationService {
     );
     if (receiverBlockedSender) return;
 
-    final n = AppNotification(
-      id: '',
-      type: type,
-      fromUserId: fromUserId,
-      fromUsername: fromUsername,
-      postId: postId,
-      createdAt: DateTime.now(),
+    await AuthService.instance.api.postNoContent(
+      '/api/notifications',
+      body: {
+        'toUserId': int.parse(toUserId),
+        'type': _typeToBackend(type),
+        'postId': postId == null ? null : int.tryParse(postId),
+      },
     );
-
-    try {
-      await _itemsRef(toUserId).add(n.toMap());
-    } on FirebaseException catch (e) {
-      if (e.code == 'unavailable') return;
-      rethrow;
-    }
   }
 
   Future<void> markAllAsRead({required String uid}) async {
-    final query = await _itemsRef(uid)
-        .where('isRead', isEqualTo: false)
-        .limit(100)
-        .get();
-
-    final batch = FirebaseFirestore.instance.batch();
-    for (final doc in query.docs) {
-      batch.update(doc.reference, {'isRead': true});
-    }
-    await batch.commit();
+    await AuthService.instance.api.postNoContent('/api/notifications/mark-all-read');
   }
+}
+
+String _typeToBackend(AppNotificationType type) {
+  switch (type) {
+    case AppNotificationType.like:
+      return 'like';
+    case AppNotificationType.comment:
+      return 'comment';
+    case AppNotificationType.friendRequest:
+      return 'friend_request';
+    case AppNotificationType.friendAccepted:
+      return 'friend_accepted';
+    case AppNotificationType.follow:
+      return 'follow';
+  }
+}
+
+bool _equals(List<AppNotification> a, List<AppNotification> b) {
+  if (identical(a, b)) return true;
+  if (a.length != b.length) return false;
+  for (var i = 0; i < a.length; i++) {
+    final na = a[i];
+    final nb = b[i];
+    if (na.id != nb.id) return false;
+    if (na.isRead != nb.isRead) return false;
+    if (na.type != nb.type) return false;
+    if (na.postId != nb.postId) return false;
+    if (na.fromUserId != nb.fromUserId) return false;
+  }
+  return true;
 }

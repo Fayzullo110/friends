@@ -1,0 +1,27 @@
+server:
+  port: 8080
+
+spring:
+  datasource:
+    url: jdbc:mysql://localhost:3306/friends?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC
+    username: root
+    password: "Kirish1009"
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.MySQLDialect
+  flyway:
+    enabled: true
+    baseline-on-migrate: true
+
+app:
+  jwt:
+    # Replace this in production (at least 32 chars). Keep it secret.
+    secret: "change-me-change-me-change-me-change-me"
+    expirationSeconds: 3600
+  oauth:
+    googleClientIds: ""
+    facebookAppId: ""
+    facebookAppSecret: ""

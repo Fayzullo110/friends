@@ -1,42 +1,40 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
-
-import '../models/app_notification.dart';
-import 'notification_service.dart';
 import 'block_service.dart';
+import 'auth_service.dart';
 
 class FollowService {
   FollowService._();
 
   static final FollowService instance = FollowService._();
 
-  final _firestore = FirebaseFirestore.instance;
-
-  CollectionReference<Map<String, dynamic>> _followersRef(String uid) {
-    return _firestore.collection('followers').doc(uid).collection('items');
-  }
-
-  CollectionReference<Map<String, dynamic>> _followingRef(String uid) {
-    return _firestore.collection('following').doc(uid).collection('items');
-  }
-
   Stream<List<String>> watchFollowers({required String uid}) {
-    return _followersRef(uid)
-        .orderBy('createdAt', descending: true)
-        .snapshots()
-        .map((snap) => snap.docs
-            .map((d) => d.data()['userId'] as String? ?? '')
-            .where((id) => id.isNotEmpty)
-            .toList());
+    return _pollList(() => getFollowersOnce(uid: uid));
   }
 
   Stream<List<String>> watchFollowing({required String uid}) {
-    return _followingRef(uid)
-        .orderBy('createdAt', descending: true)
-        .snapshots()
-        .map((snap) => snap.docs
-            .map((d) => d.data()['userId'] as String? ?? '')
-            .where((id) => id.isNotEmpty)
-            .toList());
+    return _pollList(() => getFollowingOnce(uid: uid));
+  }
+
+  Stream<List<String>> _pollList(Future<List<String>> Function() loader) async* {
+    List<String>? last;
+    while (true) {
+      final next = await loader();
+      next.sort();
+      if (last == null || !_listEquals(last, next)) {
+        last = next;
+        yield next;
+      }
+      await Future<void>.delayed(const Duration(seconds: 10));
+    }
+  }
+
+  Future<List<String>> getFollowersOnce({required String uid}) async {
+    final list = await AuthService.instance.api.getList('/api/follows/followers');
+    return list.map((e) => e.toString()).toList();
+  }
+
+  Future<List<String>> getFollowingOnce({required String uid}) async {
+    final list = await AuthService.instance.api.getList('/api/follows/following');
+    return list.map((e) => e.toString()).toList();
   }
 
   Future<void> follow({
@@ -59,35 +57,8 @@ class FollowService {
       throw Exception('blocked');
     }
 
-    final followersRef = _followersRef(toUserId).doc(fromUserId);
-    final followingRef = _followingRef(fromUserId).doc(toUserId);
-
-    await _firestore.runTransaction((tx) async {
-      tx.set(followersRef, {
-        'userId': fromUserId,
-        'createdAt': FieldValue.serverTimestamp(),
-      });
-      tx.set(followingRef, {
-        'userId': toUserId,
-        'createdAt': FieldValue.serverTimestamp(),
-      });
-    });
-
-    // Best-effort notification for the user being followed.
-    try {
-      final doc = await _firestore.collection('users').doc(fromUserId).get();
-      final data = doc.data() ?? const <String, dynamic>{};
-      final fromUsername = (data['username'] as String?) ?? '';
-
-      await NotificationService.instance.createNotification(
-        toUserId: toUserId,
-        type: AppNotificationType.follow,
-        fromUserId: fromUserId,
-        fromUsername: fromUsername.isEmpty ? 'Someone' : fromUsername,
-      );
-    } on FirebaseException catch (_) {
-      // If notifications fail (e.g. offline), silently ignore.
-    }
+    final target = int.parse(toUserId);
+    await AuthService.instance.api.postNoContent('/api/follows/$target');
   }
 
   Future<void> unfollow({
@@ -96,13 +67,8 @@ class FollowService {
   }) async {
     if (fromUserId == toUserId) return;
 
-    final followersRef = _followersRef(toUserId).doc(fromUserId);
-    final followingRef = _followingRef(fromUserId).doc(toUserId);
-
-    await _firestore.runTransaction((tx) async {
-      tx.delete(followersRef);
-      tx.delete(followingRef);
-    });
+    final target = int.parse(toUserId);
+    await AuthService.instance.api.deleteNoContent('/api/follows/$target');
   }
 
   Stream<bool> watchIsFollowing({
@@ -112,7 +78,19 @@ class FollowService {
     if (fromUserId.isEmpty || toUserId.isEmpty) {
       return Stream.value(false);
     }
-    return _followingRef(fromUserId).doc(toUserId).snapshots().map((doc) => doc.exists);
+    return _pollBool(() => isFollowing(fromUserId: fromUserId, toUserId: toUserId));
+  }
+
+  Stream<bool> _pollBool(Future<bool> Function() loader) async* {
+    bool? last;
+    while (true) {
+      final next = await loader();
+      if (last == null || last != next) {
+        last = next;
+        yield next;
+      }
+      await Future<void>.delayed(const Duration(seconds: 10));
+    }
   }
 
   Future<bool> isFollowing({
@@ -120,7 +98,16 @@ class FollowService {
     required String toUserId,
   }) async {
     if (fromUserId == toUserId) return false;
-    final doc = await _followingRef(fromUserId).doc(toUserId).get();
-    return doc.exists;
+    final target = int.parse(toUserId);
+    return AuthService.instance.api.getBool('/api/follows/$target/exists');
   }
+}
+
+bool _listEquals(List<String> a, List<String> b) {
+  if (identical(a, b)) return true;
+  if (a.length != b.length) return false;
+  for (var i = 0; i < a.length; i++) {
+    if (a[i] != b[i]) return false;
+  }
+  return true;
 }

@@ -1,17 +1,11 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'dart:async';
 
 import '../models/user_status.dart';
+import 'auth_service.dart';
 
 class UserStatusService {
   static final UserStatusService instance = UserStatusService._();
   UserStatusService._();
-
-  final _statusesRef = FirebaseFirestore.instance
-      .collection('userStatuses')
-      .withConverter<UserStatus>(
-        fromFirestore: (doc, _) => UserStatus.fromDoc(doc),
-        toFirestore: (status, _) => status.toMap(),
-      );
 
   /// Create a new status
   Future<String> createStatus({
@@ -24,28 +18,18 @@ class UserStatusService {
     String? musicArtist,
     String? musicUrl,
   }) async {
-    final now = DateTime.now();
-    final status = UserStatus(
-      id: '',
-      userId: userId,
-      username: username,
-      photoUrl: photoUrl,
-      text: text,
-      emoji: emoji,
-      musicTitle: musicTitle,
-      musicArtist: musicArtist,
-      musicUrl: musicUrl,
-      createdAt: now,
-      expiresAt: now.add(const Duration(hours: 24)),
-      seenBy: [userId],
+    final res = await AuthService.instance.api.postJson(
+      '/api/statuses',
+      {
+        'text': text,
+        'emoji': emoji,
+        'musicTitle': musicTitle,
+        'musicArtist': musicArtist,
+        'musicUrl': musicUrl,
+      },
+      (json) => UserStatus.fromJson(json),
     );
-
-    print('[UserStatusService] Creating status: ${status.toMap()}');
-
-    final doc = await _statusesRef.add(status);
-    
-    print('[UserStatusService] Status created with ID: ${doc.id}');
-    return doc.id;
+    return res.id;
   }
 
   /// Watch active statuses from followed users
@@ -53,34 +37,95 @@ class UserStatusService {
     required String currentUserId,
     required List<String> followingIds,
   }) {
-    final now = Timestamp.fromDate(DateTime.now());
+    final controller = StreamController<List<UserStatus>>();
+    List<UserStatus>? last;
 
-    return _statusesRef
-        .where('userId', whereIn: [...followingIds, currentUserId])
-        .where('expiresAt', isGreaterThan: now)
-        .orderBy('expiresAt', descending: false)
-        .orderBy('createdAt', descending: true)
-        .snapshots()
-        .map((snap) => snap.docs.map((d) => d.data()).toList())
-        .handleError((error, stackTrace) {
-      return <UserStatus>[];
-    });
+    Future<void> tick() async {
+      try {
+        final rows = await AuthService.instance.api.getListOfMaps('/api/statuses');
+        final all = rows.map(UserStatus.fromJson).toList();
+        final allowed = <String>{...followingIds, currentUserId};
+        final next = all.where((s) => allowed.contains(s.userId)).toList();
+        if (last == null || !_statusesEqual(last!, next)) {
+          last = next;
+          controller.add(next);
+        }
+      } catch (_) {
+        controller.add(const <UserStatus>[]);
+      }
+    }
+
+    tick();
+    final timer = Timer.periodic(const Duration(seconds: 12), (_) => tick());
+    controller.onCancel = () {
+      timer.cancel();
+      controller.close();
+    };
+    return controller.stream;
   }
 
   /// Watch current user's active status
   Stream<UserStatus?> watchMyStatus(String userId) {
-    final now = Timestamp.fromDate(DateTime.now());
+    final controller = StreamController<UserStatus?>();
+    UserStatus? last;
 
-    return _statusesRef
-        .where('userId', isEqualTo: userId)
-        .where('expiresAt', isGreaterThan: now)
-        .orderBy('expiresAt', descending: false)
-        .limit(1)
-        .snapshots()
-        .map((snap) => snap.docs.isEmpty ? null : snap.docs.first.data())
-        .handleError((error, stackTrace) {
-      return null;
-    });
+    Future<void> tick() async {
+      try {
+        final response = await AuthService.instance.api.get('/api/statuses/me');
+        if (response.statusCode == 204) {
+          controller.add(null);
+          return;
+        }
+        AuthService.instance.api.throwForNon2xx(response);
+        final decoded = AuthService.instance.api.decodeBody(response);
+        if (decoded is Map<String, dynamic>) {
+          final next = UserStatus.fromJson(decoded);
+          if (last == null || !_statusEqual(last!, next)) {
+            last = next;
+            controller.add(next);
+          }
+          return;
+        }
+        if (last != null) {
+          last = null;
+          controller.add(null);
+        }
+      } catch (_) {
+        if (last != null) {
+          last = null;
+          controller.add(null);
+        }
+      }
+    }
+
+    tick();
+    final timer = Timer.periodic(const Duration(seconds: 12), (_) => tick());
+    controller.onCancel = () {
+      timer.cancel();
+      controller.close();
+    };
+    return controller.stream;
+  }
+
+  bool _statusesEqual(List<UserStatus> a, List<UserStatus> b) {
+    if (identical(a, b)) return true;
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (!_statusEqual(a[i], b[i])) return false;
+    }
+    return true;
+  }
+
+  bool _statusEqual(UserStatus a, UserStatus b) {
+    if (a.id != b.id) return false;
+    if (a.userId != b.userId) return false;
+    if (a.text != b.text) return false;
+    if (a.emoji != b.emoji) return false;
+    if (a.musicUrl != b.musicUrl) return false;
+    if (a.createdAt.millisecondsSinceEpoch != b.createdAt.millisecondsSinceEpoch) {
+      return false;
+    }
+    return true;
   }
 
   /// Mark status as seen
@@ -88,19 +133,7 @@ class UserStatusService {
     required String statusId,
     required String userId,
   }) async {
-    final docRef = _statusesRef.doc(statusId);
-    await FirebaseFirestore.instance.runTransaction((tx) async {
-      final snap = await tx.get(docRef);
-      if (!snap.exists) return;
-      final status = snap.data();
-      if (status == null) return;
-
-      final currentSeenBy = List<String>.from(status.seenBy);
-      if (!currentSeenBy.contains(userId)) {
-        currentSeenBy.add(userId);
-        tx.update(docRef, {'seenBy': currentSeenBy});
-      }
-    });
+    await AuthService.instance.api.postNoContent('/api/statuses/$statusId/seen');
   }
 
   /// Delete a status (only by owner)
@@ -108,28 +141,13 @@ class UserStatusService {
     required String statusId,
     required String userId,
   }) async {
-    final docRef = _statusesRef.doc(statusId);
-    final snap = await docRef.get();
-    if (!snap.exists) return;
-
-    final status = snap.data();
-    if (status == null) return;
-
-    if (status.userId != userId) {
-      throw Exception('Only the owner can delete this status');
-    }
-
-    await docRef.delete();
+    await AuthService.instance.api.deleteNoContent('/api/statuses/$statusId');
   }
 
   /// Get status count for a user
   Future<int> getStatusCount(String userId) async {
-    final now = Timestamp.fromDate(DateTime.now());
-    final snap = await _statusesRef
-        .where('userId', isEqualTo: userId)
-        .where('expiresAt', isGreaterThan: now)
-        .count()
-        .get();
-    return snap.count ?? 0;
+    final rows = await AuthService.instance.api.getListOfMaps('/api/statuses');
+    final all = rows.map(UserStatus.fromJson).toList();
+    return all.where((s) => s.userId == userId).length;
   }
 }

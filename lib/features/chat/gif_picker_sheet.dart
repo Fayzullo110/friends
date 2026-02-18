@@ -38,6 +38,37 @@ class _GifPickerSheetState extends State<GifPickerSheet> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
 
+    if (!GiphyService.instance.isConfigured) {
+      return SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Row(
+                children: [
+                  const Expanded(
+                    child: Text('GIFs'),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.close),
+                    onPressed: () => Navigator.of(context).pop(),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Text(
+                'GIF search is not configured. Set GIPHY_API_KEY using --dart-define=GIPHY_API_KEY=YOUR_KEY and rebuild the app.',
+                style: theme.textTheme.bodyMedium,
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 12),
+            ],
+          ),
+        ),
+      );
+    }
+
     return SafeArea(
       child: Padding(
         padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
@@ -85,8 +116,9 @@ class _GifPickerSheetState extends State<GifPickerSheet> {
                   if (snapshot.hasError) {
                     return Center(
                       child: Text(
-                        'Failed to load GIFs',
+                        'Failed to load GIFs\n${snapshot.error}',
                         style: theme.textTheme.bodyMedium,
+                        textAlign: TextAlign.center,
                       ),
                     );
                   }

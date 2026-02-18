@@ -1,12 +1,12 @@
-import 'dart:io';
+import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:firebase_auth/firebase_auth.dart';
-import 'package:firebase_storage/firebase_storage.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 
 import '../../services/post_service.dart';
+import '../../services/auth_service.dart';
 
 class CreatePostScreen extends StatelessWidget {
   const CreatePostScreen({super.key});
@@ -61,8 +61,8 @@ class _CreatePostScaffoldState extends State<_CreatePostScaffold> {
                     }
 
                     try {
-                      final user = FirebaseAuth.instance.currentUser;
-                      if (user == null) {
+                      final me = AuthService.instance.currentUser;
+                      if (me == null) {
                         ScaffoldMessenger.of(context).showSnackBar(
                           const SnackBar(
                             content: Text(
@@ -76,11 +76,11 @@ class _CreatePostScaffoldState extends State<_CreatePostScaffold> {
                         _submitting = true;
                       });
 
-                      final username = user.email?.split('@').first ?? 'user';
+                      final username = me.username;
 
                       if (_type == _PostType.thought) {
                         await PostService.instance.createTextPost(
-                          authorId: user.uid,
+                          authorId: me.id,
                           authorUsername: username,
                           text: text,
                         );
@@ -95,19 +95,25 @@ class _CreatePostScaffoldState extends State<_CreatePostScaffold> {
                           return;
                         }
 
-                        final file = File(_selectedMedia!.path);
-                        final storage = FirebaseStorage.instance;
-                        final ext = _selectedMedia!.path.split('.').last;
-                        final isVideo = _type == _PostType.video;
-                        final ref = storage
-                            .ref()
-                            .child('posts/${user.uid}/${DateTime.now().millisecondsSinceEpoch}.$ext');
+                        final bytes = await _selectedMedia!.readAsBytes();
+                        final upload = await AuthService.instance.api.uploadFile(
+                          path: '/api/uploads',
+                          bytes: bytes,
+                          filename: _selectedMedia!.name,
+                        );
+                        final url = (upload['url'] as String?) ?? '';
+                        if (url.isEmpty) throw Exception('Upload failed');
 
-                        await ref.putFile(file);
-                        final url = await ref.getDownloadURL();
+                        final isVideo = _type == _PostType.video;
+                        // final ref = storage
+                        //     .ref()
+                        //     .child('posts/${user.uid}/${DateTime.now().millisecondsSinceEpoch}.$ext');
+
+                        // await ref.putFile(file);
+                        // final url = await ref.getDownloadURL();
 
                         await PostService.instance.createMediaPost(
-                          authorId: user.uid,
+                          authorId: me.id,
                           authorUsername: username,
                           text: text,
                           mediaUrl: url,
@@ -269,27 +275,45 @@ class _MediaPlaceholder extends StatelessWidget {
         children: [
           if (file != null)
             ClipRRect(
-              borderRadius: BorderRadius.circular(12),
+              borderRadius: BorderRadius.circular(20),
               child: AspectRatio(
-                aspectRatio: isImage ? 4 / 3 : 9 / 16,
+                aspectRatio: isImage ? 1 : 16 / 9,
                 child: Stack(
                   fit: StackFit.expand,
                   children: [
-                    Image.file(
-                      File(file!.path),
-                      fit: BoxFit.cover,
-                    ),
+                    if (isImage)
+                      FutureBuilder<Uint8List>(
+                        future: file!.readAsBytes(),
+                        builder: (context, snap) {
+                          if (!snap.hasData) {
+                            return const Center(
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            );
+                          }
+                          return Image.memory(
+                            snap.data!,
+                            fit: BoxFit.cover,
+                          );
+                        },
+                      )
+                    else
+                      Container(
+                        color: Colors.black12,
+                        child: const Center(
+                          child: Icon(Icons.videocam_outlined, size: 42),
+                        ),
+                      ),
                     if (!isImage)
                       Align(
                         alignment: Alignment.center,
                         child: Container(
-                          padding: const EdgeInsets.all(8),
-                          decoration: BoxDecoration(
+                          padding: const EdgeInsets.all(10),
+                          decoration: const BoxDecoration(
                             color: Colors.black45,
                             shape: BoxShape.circle,
                           ),
                           child: const Icon(
-                            Icons.play_arrow_rounded,
+                            Icons.play_arrow,
                             color: Colors.white,
                           ),
                         ),

@@ -1,17 +1,15 @@
-import 'dart:io';
-
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:firebase_auth/firebase_auth.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cached_network_image/cached_network_image.dart';
-import 'package:firebase_storage/firebase_storage.dart';
 import 'package:record/record.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../../models/chat_message.dart';
+import '../../models/app_user.dart';
 import '../../services/chat_service.dart';
+import '../../services/video_call_service.dart';
+import '../../services/auth_service.dart';
 import '../../theme/ios_icons.dart';
 import 'jitsi_call_screen.dart';
 import 'media_actions_sheet.dart';
@@ -26,11 +24,13 @@ enum RecordMode {
 class ChatDetailScreen extends StatefulWidget {
   final String chatId;
   final String title;
+  final String? otherUserId;
 
   const ChatDetailScreen({
     super.key,
     required this.chatId,
     required this.title,
+    this.otherUserId,
   });
 
   @override
@@ -56,7 +56,7 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
 
-    final currentUserId = FirebaseAuth.instance.currentUser?.uid;
+    final currentUserId = AuthService.instance.currentUser?.id;
     if (currentUserId == null) {
       return Scaffold(
         appBar: AppBar(title: Text(widget.title)),
@@ -69,6 +69,8 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
     final appBarBg = isDark ? theme.appBarTheme.backgroundColor : Colors.white;
     final appBarFg = isDark ? theme.appBarTheme.foregroundColor : Colors.black;
 
+    final String? directOtherId = widget.otherUserId;
+
     return Scaffold(
       backgroundColor: isDark ? theme.scaffoldBackgroundColor : lightChatBg,
       appBar: AppBar(
@@ -76,35 +78,39 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
         foregroundColor: appBarFg,
         elevation: isDark ? 1 : 0,
         titleSpacing: 12,
-        title: StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
-          stream: FirebaseFirestore.instance
-              .collection('chats')
-              .doc(widget.chatId)
-              .snapshots(),
-          builder: (context, chatSnap) {
-            final chatData = chatSnap.data?.data();
-            final typing =
-                (chatData?['typing'] as Map<String, dynamic>? ?? const {});
-            final othersTyping = typing.keys
-                .where((id) => id != currentUserId)
-                .toList();
-
-            final isSomeoneTyping = othersTyping.isNotEmpty;
-            final members =
-                (chatData?['members'] as List<dynamic>? ?? const [])
-                    .cast<String>();
-            final otherId = members.firstWhere(
-              (m) => m != currentUserId,
-              orElse: () => '',
-            );
-
-            if (otherId.isEmpty) {
-              return Row(
-                children: [
-                  CircleAvatar(
+        title: Row(
+          children: [
+            if (directOtherId == null)
+              CircleAvatar(
+                radius: 18,
+                backgroundColor: theme.colorScheme.primary.withOpacity(0.12),
+                child: Text(
+                  widget.title.isNotEmpty
+                      ? widget.title.substring(0, 1).toUpperCase()
+                      : 'C',
+                  style: TextStyle(
+                    color: theme.colorScheme.primary,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              )
+            else
+              FutureBuilder<AppUser>(
+                future: AuthService.instance.api.getJson(
+                  '/api/users/$directOtherId',
+                  (json) => AppUser.fromJson(json),
+                ),
+                builder: (context, snap) {
+                  final u = snap.data;
+                  final photoUrl = u?.photoUrl;
+                  return CircleAvatar(
                     radius: 18,
                     backgroundColor:
                         theme.colorScheme.primary.withOpacity(0.12),
+                    foregroundImage:
+                        (photoUrl != null && photoUrl.isNotEmpty)
+                            ? NetworkImage(photoUrl)
+                            : null,
                     child: Text(
                       widget.title.isNotEmpty
                           ? widget.title.substring(0, 1).toUpperCase()
@@ -114,110 +120,91 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
                         fontWeight: FontWeight.w700,
                       ),
                     ),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Text(
-                      widget.title,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                ],
-              );
-            }
-
-            return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
-              stream: FirebaseFirestore.instance
-                  .collection('users')
-                  .doc(otherId)
-                  .snapshots(),
-              builder: (context, userSnap) {
-                final userData = userSnap.data?.data();
-                final isOnline = userData?['isOnline'] as bool? ?? false;
-                final lastActiveTs =
-                    userData?['lastActiveAt'] as Timestamp?;
-                final lastActive = lastActiveTs?.toDate();
-
-                String subtitle = '';
-                if (isSomeoneTyping) {
-                  subtitle = 'typing…';
-                } else if (isOnline) {
-                  subtitle = 'Online';
-                } else if (lastActive != null) {
-                  subtitle = _formatLastSeen(lastActive);
-                }
-
-                return Row(
-                  children: [
-                    CircleAvatar(
-                      radius: 18,
-                      backgroundColor:
-                          theme.colorScheme.primary.withOpacity(0.12),
-                      child: Text(
-                        widget.title.isNotEmpty
-                            ? widget.title.substring(0, 1).toUpperCase()
-                            : 'C',
-                        style: TextStyle(
-                          color: theme.colorScheme.primary,
-                          fontWeight: FontWeight.w700,
-                        ),
+                  );
+                },
+              ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: StreamBuilder<Map<String, bool>>(
+                stream: ChatService.instance.watchTyping(chatId: widget.chatId),
+                builder: (context, snap) {
+                  final typingMap = snap.data ?? const <String, bool>{};
+                  final isTyping = typingMap.isNotEmpty;
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        widget.title,
+                        overflow: TextOverflow.ellipsis,
                       ),
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Text(
-                            widget.title,
-                            overflow: TextOverflow.ellipsis,
+                      if (isTyping)
+                        Text(
+                          'Typing…',
+                          style: theme.textTheme.labelSmall?.copyWith(
+                            color: theme.colorScheme.primary,
                           ),
-                          if (subtitle.isNotEmpty)
-                            Text(
-                              subtitle,
-                              style:
-                                  theme.textTheme.labelSmall?.copyWith(
-                                color: isOnline
-                                    ? Colors.green
-                                    : theme.colorScheme.onSurface
-                                        .withOpacity(0.7),
-                              ),
-                            ),
-                        ],
-                      ),
-                    ),
-                  ],
-                );
-              },
-            );
-          },
+                        ),
+                    ],
+                  );
+                },
+              ),
+            ),
+          ],
         ),
         actions: [
           IconButton(
-            onPressed: () {
-              Navigator.of(context).push(
-                MaterialPageRoute(
-                  builder: (_) => JitsiCallScreen(
-                    roomName: 'friends_chat_${widget.chatId}',
+            onPressed: () async {
+              try {
+                if (kIsWeb) {
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => JitsiCallScreen(
+                        roomName: 'friends_chat_${widget.chatId}',
+                        title: widget.title,
+                      ),
+                    ),
+                  );
+                } else {
+                  await VideoCallService.instance.joinChatCall(
+                    chatId: widget.chatId,
                     title: widget.title,
-                  ),
-                ),
-              );
+                  );
+                }
+              } catch (e) {
+                if (!context.mounted) return;
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text(e.toString())),
+                );
+              }
             },
             icon: const Icon(IOSIcons.phone),
             tooltip: 'Call',
           ),
           IconButton(
-            onPressed: () {
-              Navigator.of(context).push(
-                MaterialPageRoute(
-                  builder: (_) => JitsiCallScreen(
-                    roomName: 'friends_chat_${widget.chatId}',
+            onPressed: () async {
+              try {
+                if (kIsWeb) {
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => JitsiCallScreen(
+                        roomName: 'friends_chat_${widget.chatId}',
+                        title: widget.title,
+                      ),
+                    ),
+                  );
+                } else {
+                  await VideoCallService.instance.joinChatCall(
+                    chatId: widget.chatId,
                     title: widget.title,
-                  ),
-                ),
-              );
+                  );
+                }
+              } catch (e) {
+                if (!context.mounted) return;
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text(e.toString())),
+                );
+              }
             },
             icon: const Icon(IOSIcons.videoCam),
             tooltip: 'Video call',
@@ -413,27 +400,6 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
     );
   }
 
-  String _formatLastSeen(DateTime lastActive) {
-    final now = DateTime.now();
-    final diff = now.difference(lastActive);
-
-    if (diff.inMinutes < 1) {
-      return 'Last seen just now';
-    }
-    if (diff.inMinutes < 60) {
-      return 'Last seen ${diff.inMinutes} min ago';
-    }
-    if (diff.inHours < 24) {
-      return 'Last seen ${diff.inHours} h ago';
-    }
-
-    final days = diff.inDays;
-    if (days == 1) {
-      return 'Last seen yesterday';
-    }
-    return 'Last seen $days days ago';
-  }
-
   Future<void> _send(String currentUserId) async {
     final text = _controller.text.trim();
     if (text.isEmpty) return;
@@ -514,21 +480,25 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
 
         if (path == null) return;
 
-        final file = File(path);
-        if (!await file.exists()) return;
-
-        final bytes = await file.readAsBytes();
+        final bytes = await XFile(path).readAsBytes();
         final fileName =
             'voice_${DateTime.now().millisecondsSinceEpoch.toString()}.m4a';
 
-        final storageRef = FirebaseStorage.instance
-            .ref()
-            .child('chatMedia')
-            .child(widget.chatId)
-            .child(fileName);
-
-        final task = await storageRef.putData(bytes);
-        final url = await task.ref.getDownloadURL();
+        // TODO: Replace with backend file upload
+        // final storageRef = FirebaseStorage.instance
+        //     .ref()
+        //     .child('chatMedia')
+        //     .child(widget.chatId)
+        //     .child(fileName);
+        // await storageRef.putData(bytes);
+        // final url = await storageRef.getDownloadURL();
+        final upload = await AuthService.instance.api.uploadFile(
+          path: '/api/uploads',
+          bytes: bytes,
+          filename: fileName,
+        );
+        final url = (upload['url'] as String?) ?? '';
+        if (url.isEmpty) throw Exception('Upload failed');
 
         await ChatService.instance.sendVoice(
           chatId: widget.chatId,
@@ -562,14 +532,22 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
       if (picked == null) return;
 
       final bytes = await picked.readAsBytes();
-      final storageRef = FirebaseStorage.instance
-          .ref()
-          .child('chatMedia')
-          .child(widget.chatId)
-          .child('video_${DateTime.now().millisecondsSinceEpoch}.mp4');
+      // TODO: Replace with backend file upload
+      // final storageRef = FirebaseStorage.instance
+      //     .ref()
+      //     .child('chatMedia')
+      //     .child(widget.chatId)
+      //     .child('video_${DateTime.now().millisecondsSinceEpoch}.mp4');
 
-      final task = await storageRef.putData(bytes);
-      final url = await task.ref.getDownloadURL();
+      // final task = await storageRef.putData(bytes);
+      // final url = await task.ref.getDownloadURL();
+      final upload = await AuthService.instance.api.uploadFile(
+        path: '/api/uploads',
+        bytes: bytes,
+        filename: 'video_${DateTime.now().millisecondsSinceEpoch}.mp4',
+      );
+      final url = (upload['url'] as String?) ?? '';
+      if (url.isEmpty) throw Exception('Upload failed');
 
       await ChatService.instance.sendVideo(
         chatId: widget.chatId,
@@ -878,7 +856,7 @@ class _ChatBubble extends StatelessWidget {
         return VoiceMessagePlayer(url: message.mediaUrl!);
       case ChatMessageType.text:
         return Text(
-          message.text,
+          message.text ?? '',
           style: TextStyle(
             color: textColor,
             height: 1.25,

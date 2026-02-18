@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 
 import '../../models/app_user.dart';
 import '../../services/auth_service.dart';
@@ -8,6 +7,8 @@ import '../notifications/notifications_screen.dart';
 import 'edit_profile_screen.dart';
 import 'change_password_screen.dart';
 import 'blocked_users_screen.dart';
+import 'archived_posts_screen.dart';
+import 'archived_reels_screen.dart';
 
 class SettingsScreen extends StatelessWidget {
   const SettingsScreen({super.key});
@@ -93,6 +94,48 @@ class SettingsScreen extends StatelessWidget {
               ),
               const Divider(height: 1),
               ListTile(
+                leading: const Icon(IOSIcons.bookmark),
+                title: const Text('Archived posts'),
+                subtitle: const Text('Restore or delete archived posts'),
+                onTap: () {
+                  if (user == null) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('Please sign in to view archived posts.'),
+                      ),
+                    );
+                    return;
+                  }
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => const ArchivedPostsScreen(),
+                    ),
+                  );
+                },
+              ),
+              const Divider(height: 1),
+              ListTile(
+                leading: const Icon(IOSIcons.film),
+                title: const Text('Archived reels'),
+                subtitle: const Text('Restore or delete archived reels'),
+                onTap: () {
+                  if (user == null) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('Please sign in to view archived reels.'),
+                      ),
+                    );
+                    return;
+                  }
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => const ArchivedReelsScreen(),
+                    ),
+                  );
+                },
+              ),
+              const Divider(height: 1),
+              ListTile(
                 leading: const Icon(IOSIcons.lock),
                 title: const Text('Security'),
                 subtitle: const Text('Password and login activity'),
@@ -137,9 +180,7 @@ class SettingsScreen extends StatelessWidget {
                 leading: const Icon(IOSIcons.logout),
                 title: const Text('Log out'),
                 onTap: () async {
-                  final current = FirebaseAuth.instance.currentUser;
-                  if (current == null) return;
-                  await AuthService.instance.signOut();
+                  await AuthService.instance.logout();
                   if (context.mounted) {
                     Navigator.of(context).pop();
                   }

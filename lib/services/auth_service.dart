@@ -1,70 +1,66 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
-
+import 'dart:async';
+import 'package:flutter/foundation.dart';
+import 'package:google_sign_in/google_sign_in.dart';
 import '../models/app_user.dart';
+import 'api_client.dart';
 
 class AuthService {
   AuthService._();
 
   static final AuthService instance = AuthService._();
 
-  final FirebaseAuth _auth = FirebaseAuth.instance;
-  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  static const String _googleWebClientId =
+      String.fromEnvironment('GOOGLE_WEB_CLIENT_ID');
 
-  Stream<AppUser?> get userChanges {
-    return _auth.userChanges().asyncMap((user) async {
-      if (user == null) return null;
+  late final ApiClient _api;
 
-      try {
-        final doc = await _firestore.collection('users').doc(user.uid).get();
-        if (!doc.exists) {
-          return AppUser(
-            id: user.uid,
-            email: user.email ?? '',
-            username: user.email?.split('@').first ?? 'user',
-          );
-        }
-        return AppUser.fromDoc(doc);
-      } catch (_) {
-        // If Firestore is offline or unavailable, fall back to a minimal user
-        // so the app can still proceed with authentication.
-        return AppUser(
-          id: user.uid,
-          email: user.email ?? '',
-          username: user.email?.split('@').first ?? 'user',
-        );
-      }
-    });
+  ApiClient get api => _api;
+
+  void init({required String baseUrl}) {
+    _api = ApiClient(baseUrl: baseUrl, enableLogging: false);
+    // Emit initial auth state so StreamBuilder doesn't stay in waiting state.
+    _userController.add(_currentUser);
   }
 
-  /// Returns true if the given username is not used by any user.
+  // Stream of current user (emits null on logout)
+  final _userController = StreamController<AppUser?>.broadcast();
+
+  Stream<AppUser?> get userChanges async* {
+    yield _currentUser;
+    yield* _userController.stream;
+  }
+
+  AppUser? _currentUser;
+
+  AppUser? get currentUser => _currentUser;
+
+  Future<void> _loadMe() async {
+    try {
+      final user = await _api.getJson('/api/users/me', (json) => AppUser.fromJson(json));
+      _currentUser = user;
+      _userController.add(user);
+    } catch (e) {
+      debugPrint('[AuthService] Failed to load /me: $e');
+      await logout(); // clear token if invalid
+    }
+  }
+
+  Future<void> initFromStoredToken() async {
+    try {
+      await _loadMe();
+    } catch (e) {
+      debugPrint('[AuthService] No stored token or invalid: $e');
+    }
+    // Ensure at least one emission even if the request was skipped/failed.
+    _userController.add(_currentUser);
+  }
+
   Future<bool> isUsernameAvailable(String username) async {
-    final normalized = username.trim();
-    if (normalized.isEmpty) return false;
-
-    final snap = await _firestore
-        .collection('users')
-        .where('username', isEqualTo: normalized)
-        .limit(1)
-        .get();
-
-    return snap.docs.isEmpty;
-  }
-
-  /// Search users by username prefix (case-sensitive for now).
-  Future<List<AppUser>> searchUsersByUsername(String query,
-      {int limit = 20}) async {
-    final trimmed = query.trim();
-    if (trimmed.isEmpty) return [];
-
-    final snap = await _firestore
-        .collection('users')
-        .where('username', isGreaterThanOrEqualTo: trimmed)
-        .where('username', isLessThanOrEqualTo: '$trimmed\uf8ff')
-        .limit(limit)
-        .get();
-
-    return snap.docs.map(AppUser.fromDoc).toList();
+    final u = username.trim();
+    if (u.isEmpty) return false;
+    return await _api.getBool(
+      '/api/users/username-available?u=${Uri.encodeQueryComponent(u)}',
+    );
   }
 
   Future<AppUser> signUp({
@@ -75,31 +71,24 @@ class AuthService {
     required String lastName,
     required int age,
   }) async {
-    final normalizedUsername = username.trim();
-
-    // Ensure username is unique across all users.
-    final available = await isUsernameAvailable(normalizedUsername);
-    if (!available) {
-      throw FirebaseAuthException(
-        code: 'username-already-in-use',
-        message: 'This username is already taken. Please choose another one.',
-      );
-    }
-
-    final cred = await _auth.createUserWithEmailAndPassword(
-      email: email,
-      password: password,
-    );
-    final uid = cred.user!.uid;
-    final user = AppUser(
-      id: uid,
-      email: email,
-      username: normalizedUsername,
-      firstName: firstName.trim().isEmpty ? null : firstName.trim(),
-      lastName: lastName.trim().isEmpty ? null : lastName.trim(),
-      age: age,
-    );
-    await _firestore.collection('users').doc(uid).set(user.toMap());
+    final payload = {
+      'email': email.trim(),
+      'username': username.trim(),
+      'password': password,
+      if (firstName.trim().isNotEmpty) 'firstName': firstName.trim(),
+      if (lastName.trim().isNotEmpty) 'lastName': lastName.trim(),
+      if (age > 0) 'age': age,
+    };
+    final response = await _api.postJson('/api/auth/signup', payload, (json) {
+      return {
+        'accessToken': json['accessToken'] as String,
+        'user': json['user'] as Map<String, dynamic>,
+      };
+    });
+    await _api.storeToken(response['accessToken'] as String);
+    final user = AppUser.fromJson(response['user'] as Map<String, dynamic>);
+    _currentUser = user;
+    _userController.add(user);
     return user;
   }
 
@@ -107,70 +96,83 @@ class AuthService {
     required String email,
     required String password,
   }) async {
-    final cred = await _auth.signInWithEmailAndPassword(
-      email: email,
-      password: password,
-    );
-    final uid = cred.user!.uid;
-    final doc = await _firestore.collection('users').doc(uid).get();
-    if (!doc.exists) {
-      final user = AppUser(
-        id: uid,
-        email: email,
-        username: email.split('@').first,
-      );
-      await _firestore.collection('users').doc(uid).set(user.toMap());
-      return user;
-    }
-    return AppUser.fromDoc(doc);
+    final payload = {
+      'identifier': email.trim(),
+      'password': password,
+    };
+    final response = await _api.postJson('/api/auth/login', payload, (json) {
+      return {
+        'accessToken': json['accessToken'] as String,
+        'user': json['user'] as Map<String, dynamic>,
+      };
+    });
+    await _api.storeToken(response['accessToken'] as String);
+    final user = AppUser.fromJson(response['user'] as Map<String, dynamic>);
+    _currentUser = user;
+    _userController.add(user);
+    return user;
   }
 
-  /// Sign in using either an email address or a username.
-  ///
-  /// If [identifier] contains '@', it is treated as an email.
-  /// Otherwise, we look up the user by username in Firestore and then
-  /// authenticate with their email.
   Future<AppUser> signInWithIdentifier({
     required String identifier,
     required String password,
   }) async {
-    final trimmed = identifier.trim();
-    if (trimmed.isEmpty) {
-      throw FirebaseAuthException(
-        code: 'invalid-identifier',
-        message: 'Please enter your email or username.',
+    return signIn(email: identifier, password: password);
+  }
+
+  Future<AppUser> signInWithGoogle() async {
+    if (kIsWeb && _googleWebClientId.trim().isEmpty) {
+      throw Exception(
+        'Missing GOOGLE_WEB_CLIENT_ID. Run Flutter with --dart-define=GOOGLE_WEB_CLIENT_ID=... for web Google sign-in.',
       );
     }
 
-    if (trimmed.contains('@')) {
-      // Treat as email login.
-      return signIn(email: trimmed, password: password);
+    final googleSignIn = GoogleSignIn(
+      scopes: const <String>['email', 'profile'],
+      clientId: kIsWeb ? _googleWebClientId : null,
+    );
+
+    final account = await googleSignIn.signIn();
+    if (account == null) {
+      throw Exception('Google sign-in canceled');
+    }
+    final auth = await account.authentication;
+    final idToken = auth.idToken;
+    if (idToken == null || idToken.isEmpty) {
+      throw Exception('Google sign-in failed: missing idToken');
     }
 
-    // Treat as username: look up the corresponding user document.
-    final snap = await _firestore
-        .collection('users')
-        .where('username', isEqualTo: trimmed)
-        .limit(1)
-        .get();
+    final response = await _api.postJson(
+      '/api/auth/oauth/google',
+      {
+        'idToken': idToken,
+      },
+      (json) => {
+        'accessToken': json['accessToken'] as String,
+        'user': json['user'] as Map<String, dynamic>,
+      },
+    );
 
-    if (snap.docs.isEmpty) {
-      throw FirebaseAuthException(
-        code: 'user-not-found-username',
-        message: 'No account found for that username.',
-      );
-    }
+    await _api.storeToken(response['accessToken'] as String);
+    final user = AppUser.fromJson(response['user'] as Map<String, dynamic>);
+    _currentUser = user;
+    _userController.add(user);
+    return user;
+  }
 
-    final data = snap.docs.first.data();
-    final email = data['email'] as String?;
-    if (email == null || email.isEmpty) {
-      throw FirebaseAuthException(
-        code: 'user-email-missing',
-        message: 'This account is missing an email address.',
-      );
-    }
+  Future<void> logout() async {
+    await _api.clearToken();
+    _currentUser = null;
+    _userController.add(null);
+  }
 
-    return signIn(email: email, password: password);
+  Future<List<AppUser>> searchUsersByUsername(String query) async {
+    final q = query.trim();
+    if (q.isEmpty) return <AppUser>[];
+    final rows = await _api.getListOfMaps(
+      '/api/users/search?q=${Uri.encodeQueryComponent(q)}',
+    );
+    return rows.map(AppUser.fromJson).toList();
   }
 
   Future<void> updateProfile({
@@ -179,40 +181,20 @@ class AuthService {
     String? bio,
     String? photoUrl,
   }) async {
-    final normalized = username.trim();
-    if (normalized.isEmpty) {
-      throw FirebaseAuthException(
-        code: 'invalid-username',
-        message: 'Username cannot be empty.',
-      );
-    }
-
-    // Ensure username is either unchanged or still unique.
-    final userDoc = await _firestore.collection('users').doc(uid).get();
-    final currentUsername = (userDoc.data() ?? const {})['username'] as String?;
-    if (currentUsername == null || currentUsername != normalized) {
-      final available = await isUsernameAvailable(normalized);
-      if (!available) {
-        throw FirebaseAuthException(
-          code: 'username-already-in-use',
-          message: 'This username is already taken. Please choose another one.',
-        );
-      }
-    }
-
-    final update = <String, dynamic>{
-      'username': normalized,
-      'bio': bio,
-      'photoUrl': photoUrl,
-    };
-
-    await _firestore.collection('users').doc(uid).set(
-          update,
-          SetOptions(merge: true),
-        );
+    final updated = await _api.patchJson(
+      '/api/users/me',
+      {
+        'username': username.trim(),
+        'bio': bio,
+        'photoUrl': photoUrl,
+      },
+      (json) => AppUser.fromJson(json),
+    );
+    _currentUser = updated;
+    _userController.add(updated);
   }
 
-  Future<void> signOut() async {
-    await _auth.signOut();
+  void dispose() {
+    _userController.close();
   }
 }

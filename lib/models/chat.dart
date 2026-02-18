@@ -1,5 +1,3 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
-
 class Chat {
   final String id;
   final List<String> members;
@@ -19,29 +17,32 @@ class Chat {
     required this.title,
   });
 
-  factory Chat.fromDoc(DocumentSnapshot<Map<String, dynamic>> doc) {
-    final data = doc.data() ?? {};
+  factory Chat.fromJson(Map<String, dynamic> data) {
     return Chat(
-      id: doc.id,
-      members: (data['members'] as List<dynamic>? ?? [])
-          .map((e) => e as String)
+      id: data['id'].toString(),
+      members: (data['members'] as List<dynamic>? ?? const [])
+          .map((e) => e.toString())
           .toList(),
-      memberUsernames: Map<String, String>.from(
-        data['memberUsernames'] as Map<String, dynamic>? ?? const {},
-      ),
+      memberUsernames: ((data['memberUsernames'] as Map?) ?? const {})
+          .map((k, v) => MapEntry(k.toString(), v.toString()))
+          .cast<String, String>(),
       lastMessage: data['lastMessage'] as String? ?? '',
-      updatedAt: (data['updatedAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
-      isGroup: data['isGroup'] as bool? ?? false,
+      updatedAt: DateTime.fromMillisecondsSinceEpoch(
+        (data['updatedAt'] as num?)?.toInt() ?? 0,
+        isUtc: false,
+      ),
+      isGroup: data['isGroup'] as bool? ?? (data['group'] as bool? ?? false),
       title: data['title'] as String?,
     );
   }
 
-  Map<String, dynamic> toMap() {
+  Map<String, dynamic> toJson() {
     return {
+      'id': id,
       'members': members,
       'memberUsernames': memberUsernames,
       'lastMessage': lastMessage,
-      'updatedAt': Timestamp.fromDate(updatedAt),
+      'updatedAt': updatedAt.millisecondsSinceEpoch,
       'isGroup': isGroup,
       'title': title,
     };

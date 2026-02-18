@@ -1,5 +1,3 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
-
 class UserStatus {
   final String id;
   final String userId;
@@ -29,11 +27,10 @@ class UserStatus {
     this.seenBy = const [],
   });
 
-  factory UserStatus.fromDoc(DocumentSnapshot<Map<String, dynamic>> doc) {
-    final data = doc.data() ?? <String, dynamic>{};
+  factory UserStatus.fromJson(Map<String, dynamic> data) {
     return UserStatus(
-      id: doc.id,
-      userId: data['userId'] as String? ?? '',
+      id: data['id'].toString(),
+      userId: data['userId'].toString(),
       username: data['username'] as String? ?? '',
       photoUrl: data['photoUrl'] as String?,
       text: data['text'] as String? ?? '',
@@ -41,17 +38,23 @@ class UserStatus {
       musicTitle: data['musicTitle'] as String?,
       musicArtist: data['musicArtist'] as String?,
       musicUrl: data['musicUrl'] as String?,
-      createdAt: (data['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
-      expiresAt: (data['expiresAt'] as Timestamp?)?.toDate() ??
-          DateTime.now().add(const Duration(hours: 24)),
-      seenBy: (data['seenBy'] as List<dynamic>? ?? [])
-          .map((e) => e as String)
+      createdAt: DateTime.fromMillisecondsSinceEpoch(
+        (data['createdAt'] as num?)?.toInt() ?? 0,
+        isUtc: false,
+      ),
+      expiresAt: DateTime.fromMillisecondsSinceEpoch(
+        (data['expiresAt'] as num?)?.toInt() ?? 0,
+        isUtc: false,
+      ),
+      seenBy: (data['seenBy'] as List<dynamic>? ?? const [])
+          .map((e) => e.toString())
           .toList(),
     );
   }
 
-  Map<String, dynamic> toMap() {
+  Map<String, dynamic> toJson() {
     return {
+      'id': id,
       'userId': userId,
       'username': username,
       'photoUrl': photoUrl,
@@ -60,8 +63,8 @@ class UserStatus {
       'musicTitle': musicTitle,
       'musicArtist': musicArtist,
       'musicUrl': musicUrl,
-      'createdAt': Timestamp.fromDate(createdAt),
-      'expiresAt': Timestamp.fromDate(expiresAt),
+      'createdAt': createdAt.millisecondsSinceEpoch,
+      'expiresAt': expiresAt.millisecondsSinceEpoch,
       'seenBy': seenBy,
     };
   }

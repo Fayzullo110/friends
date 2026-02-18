@@ -1,11 +1,10 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:firebase_auth/firebase_auth.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:just_audio/just_audio.dart';
 
 import '../../services/user_status_service.dart';
+import '../../services/auth_service.dart';
 import '../../theme/ios_icons.dart';
 
 class CreateStatusScreen extends StatefulWidget {
@@ -257,8 +256,8 @@ class _CreateStatusScreenState extends State<CreateStatusScreen> {
       return;
     }
 
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null) {
+    final me = AuthService.instance.currentUser;
+    if (me == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Please sign in')),
       );
@@ -268,36 +267,16 @@ class _CreateStatusScreenState extends State<CreateStatusScreen> {
     setState(() => _isSubmitting = true);
 
     try {
-      String username = user.email?.split('@').first ?? 'user';
-      String? photoUrl;
-
-      final snap = await FirebaseFirestore.instance
-          .collection('users')
-          .doc(user.uid)
-          .get();
-      final data = snap.data();
-      if (data != null) {
-        final fromProfile = data['username'] as String?;
-        if (fromProfile != null && fromProfile.isNotEmpty) {
-          username = fromProfile;
-        }
-        photoUrl = data['photoUrl'] as String?;
-      }
-
-      debugPrint('Creating status for user: $username, text: $text, emoji: $_selectedEmoji');
-
       await UserStatusService.instance.createStatus(
-        userId: user.uid,
-        username: username,
-        photoUrl: photoUrl,
+        userId: me.id,
+        username: me.username,
+        photoUrl: me.photoUrl,
         text: text,
         emoji: _selectedEmoji,
         musicTitle: _musicTitle,
         musicArtist: _musicArtist,
         musicUrl: _musicUrl,
       );
-
-      debugPrint('Status created successfully');
 
       if (mounted) {
         Navigator.of(context).pop();

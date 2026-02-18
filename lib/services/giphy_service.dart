@@ -20,11 +20,16 @@ class GiphyService {
   static final GiphyService instance = GiphyService._();
 
   // TODO: consider moving this to a safer config for production.
-  static const String _apiKey = 'y49WQvNZP8NXfeoPE70wsTXzu43yRLjw';
+  static const String _apiKey = String.fromEnvironment('GIPHY_API_KEY');
+
+  bool get isConfigured => _apiKey.trim().isNotEmpty;
 
   static const String _baseUrl = 'https://api.giphy.com/v1/gifs';
 
   Future<List<GiphyGif>> trending({int limit = 24}) async {
+    if (!isConfigured) {
+      throw StateError('Missing GIPHY_API_KEY');
+    }
     final uri = Uri.parse(
       '$_baseUrl/trending?api_key=$_apiKey&limit=$limit&rating=g',
     );
@@ -32,6 +37,9 @@ class GiphyService {
   }
 
   Future<List<GiphyGif>> search(String query, {int limit = 24}) async {
+    if (!isConfigured) {
+      throw StateError('Missing GIPHY_API_KEY');
+    }
     final q = query.trim();
     if (q.isEmpty) {
       return trending(limit: limit);
@@ -45,7 +53,9 @@ class GiphyService {
   Future<List<GiphyGif>> _fetch(Uri uri) async {
     final resp = await http.get(uri);
     if (resp.statusCode != 200) {
-      throw Exception('Giphy request failed (${resp.statusCode})');
+      final body = resp.body;
+      final snippet = body.length > 300 ? body.substring(0, 300) : body;
+      throw Exception('Giphy request failed (${resp.statusCode}): $snippet');
     }
     final json = jsonDecode(resp.body) as Map<String, dynamic>;
     final list = json['data'] as List<dynamic>? ?? [];

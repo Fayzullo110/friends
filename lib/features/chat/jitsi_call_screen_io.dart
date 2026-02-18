@@ -1,9 +1,10 @@
 import 'dart:convert';
 
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:webview_flutter/webview_flutter.dart';
+
+import '../../services/auth_service.dart';
 
 class JitsiCallScreenImpl extends StatefulWidget {
   final String roomName;
@@ -114,9 +115,8 @@ class _JitsiCallScreenImplState extends State<JitsiCallScreenImpl> {
   }
 
   String _buildHtml() {
-    final user = FirebaseAuth.instance.currentUser;
-    final displayName =
-        user?.email?.split('@').first ?? user?.displayName ?? 'user';
+    final me = AuthService.instance.currentUser;
+    final displayName = me?.email.split('@').first ?? me?.username ?? 'user';
     final room = widget.roomName;
 
     return '''

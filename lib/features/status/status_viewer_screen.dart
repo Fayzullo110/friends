@@ -1,11 +1,11 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:just_audio/just_audio.dart';
 
 import '../../models/user_status.dart';
 import '../../services/user_status_service.dart';
+import '../../services/auth_service.dart';
 import '../../theme/ios_icons.dart';
 
 class StatusViewerScreen extends StatefulWidget {
@@ -102,13 +102,13 @@ class _StatusViewerScreenState extends State<StatusViewerScreen>
   }
 
   Future<void> _markSeen(int index) async {
-    final authUser = FirebaseAuth.instance.currentUser;
-    if (authUser == null) return;
+    final me = AuthService.instance.currentUser;
+    if (me == null) return;
     if (index < 0 || index >= widget.statuses.length) return;
     final status = widget.statuses[index];
     await UserStatusService.instance.markSeen(
       statusId: status.id,
-      userId: authUser.uid,
+      userId: me.id,
     );
   }
 

@@ -1,12 +1,11 @@
 import 'dart:typed_data';
 
-import 'package:firebase_auth/firebase_auth.dart';
-import 'package:firebase_storage/firebase_storage.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../../services/chat_service.dart';
+import '../../services/auth_service.dart';
 import 'gif_picker_sheet.dart';
 
 class MediaActionsSheet extends StatelessWidget {
@@ -61,8 +60,8 @@ class MediaActionsSheet extends StatelessWidget {
                   label: 'GIF',
                   onTap: () async {
                     Navigator.of(context).pop();
-                    final currentUser = FirebaseAuth.instance.currentUser;
-                    if (currentUser == null) return;
+                    final me = AuthService.instance.currentUser;
+                    if (me == null) return;
 
                     await showModalBottomSheet(
                       context: context,
@@ -74,7 +73,7 @@ class MediaActionsSheet extends StatelessWidget {
                             onSelected: (gif) async {
                               await ChatService.instance.sendGif(
                                 chatId: chatId,
-                                senderId: currentUser.uid,
+                                senderId: me.id,
                                 gifUrl: gif.originalUrl,
                               );
                             },
@@ -94,8 +93,8 @@ class MediaActionsSheet extends StatelessWidget {
 
   Future<void> _pickPhoto(BuildContext context) async {
     final picker = ImagePicker();
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null) return;
+    final me = AuthService.instance.currentUser;
+    if (me == null) return;
 
     try {
       final picked = await picker.pickImage(source: ImageSource.gallery);
@@ -110,7 +109,7 @@ class MediaActionsSheet extends StatelessWidget {
 
       await ChatService.instance.sendImage(
         chatId: chatId,
-        senderId: user.uid,
+        senderId: me.id,
         imageUrl: downloadUrl,
       );
     } catch (_) {
@@ -123,8 +122,8 @@ class MediaActionsSheet extends StatelessWidget {
 
   Future<void> _pickVideo(BuildContext context) async {
     final picker = ImagePicker();
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null) return;
+    final me = AuthService.instance.currentUser;
+    if (me == null) return;
 
     try {
       final picked = await picker.pickVideo(source: ImageSource.gallery);
@@ -139,7 +138,7 @@ class MediaActionsSheet extends StatelessWidget {
 
       await ChatService.instance.sendVideo(
         chatId: chatId,
-        senderId: user.uid,
+        senderId: me.id,
         videoUrl: downloadUrl,
       );
     } catch (_) {
@@ -151,8 +150,8 @@ class MediaActionsSheet extends StatelessWidget {
   }
 
   Future<void> _pickFile(BuildContext context) async {
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null) return;
+    final me = AuthService.instance.currentUser;
+    if (me == null) return;
 
     try {
       final result = await FilePicker.platform.pickFiles();
@@ -169,7 +168,7 @@ class MediaActionsSheet extends StatelessWidget {
 
       await ChatService.instance.sendFile(
         chatId: chatId,
-        senderId: user.uid,
+        senderId: me.id,
         fileUrl: downloadUrl,
       );
     } catch (_) {
@@ -181,8 +180,8 @@ class MediaActionsSheet extends StatelessWidget {
   }
 
   Future<void> _pickAudio(BuildContext context) async {
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null) return;
+    final me = AuthService.instance.currentUser;
+    if (me == null) return;
 
     try {
       final result = await FilePicker.platform.pickFiles(
@@ -202,7 +201,7 @@ class MediaActionsSheet extends StatelessWidget {
 
       await ChatService.instance.sendVoice(
         chatId: chatId,
-        senderId: user.uid,
+        senderId: me.id,
         audioUrl: downloadUrl,
       );
     } catch (_) {
@@ -217,14 +216,12 @@ class MediaActionsSheet extends StatelessWidget {
     required Uint8List bytes,
     required String fileName,
   }) async {
-    final storageRef = FirebaseStorage.instance
-        .ref()
-        .child('chatMedia')
-        .child(chatId)
-        .child(fileName);
-
-    final task = await storageRef.putData(bytes);
-    return task.ref.getDownloadURL();
+    final upload = await AuthService.instance.api.uploadFile(
+      path: '/api/uploads',
+      bytes: bytes,
+      filename: fileName,
+    );
+    return (upload['url'] as String?) ?? '';
   }
 }
 

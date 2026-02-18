@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 
 import 'chat_detail_screen.dart';
 import '../../models/app_user.dart';
@@ -43,8 +42,8 @@ class _NewMessageScreenState extends State<NewMessageScreen> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
 
-    final firebaseUser = FirebaseAuth.instance.currentUser;
-    if (firebaseUser == null) {
+    final meNow = AuthService.instance.currentUser;
+    if (meNow == null) {
       return Scaffold(
         appBar: AppBar(title: const Text('New message')),
         body: const Center(child: Text('Please log in to start a chat.')),
@@ -113,16 +112,13 @@ class _NewMessageScreenState extends State<NewMessageScreen> {
                   return const Center(child: CircularProgressIndicator());
                 }
 
-                return StreamBuilder<List<AppUser>>(
-                  stream: ChatService.instance.watchUsers(excludeUid: me.id),
+                return FutureBuilder<List<AppUser>>(
+                  future: ChatService.instance.searchUsers(
+                    query: _query,
+                    excludeUid: me.id,
+                  ),
                   builder: (context, snapshot) {
-                    final users = snapshot.data ?? [];
-                    final q = _query.trim().toLowerCase();
-                    final filtered = users.where((u) {
-                      if (q.isEmpty) return true;
-                      return u.username.toLowerCase().contains(q) ||
-                          u.email.toLowerCase().contains(q);
-                    }).toList();
+                    final filtered = snapshot.data ?? [];
 
                     if (filtered.isEmpty) {
                       return Center(
@@ -208,6 +204,7 @@ class _NewMessageScreenState extends State<NewMessageScreen> {
                                   builder: (_) => ChatDetailScreen(
                                     chatId: chatId,
                                     title: u.username,
+                                    otherUserId: u.id,
                                   ),
                                 ),
                               );

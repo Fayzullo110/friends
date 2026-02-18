@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import '../../models/app_user.dart';
 import '../../models/post.dart';
 import '../../services/follow_service.dart';
@@ -16,6 +15,17 @@ class UserProfileScreen extends StatefulWidget {
   State<UserProfileScreen> createState() => _UserProfileScreenState();
 }
 
+String _presenceText(AppUser u) {
+  if (u.isOnline) return 'Online';
+  final dt = u.lastActiveAt;
+  if (dt == null) return '';
+  final diff = DateTime.now().difference(dt);
+  if (diff.inMinutes < 1) return 'Last seen just now';
+  if (diff.inMinutes < 60) return 'Last seen ${diff.inMinutes}m ago';
+  if (diff.inHours < 24) return 'Last seen ${diff.inHours}h ago';
+  return 'Last seen ${diff.inDays}d ago';
+}
+
 class _UserProfileScreenState extends State<UserProfileScreen> {
   bool _isBlockedByMe = false;
   bool _isBlockedMe = false;
@@ -28,19 +38,14 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
   }
 
   Future<void> _loadBlockState() async {
-    final current = FirebaseAuth.instance.currentUser;
-    if (current == null) return;
+    final me = AuthService.instance.currentUser;
+    if (me == null) return;
 
     setState(() {
       _loadingBlockState = true;
     });
 
     try {
-      final me = await AuthService.instance.userChanges.firstWhere(
-        (u) => u != null,
-      );
-      if (me == null) return;
-
       final blockedByMe = await BlockService.instance.isBlocked(
         fromUserId: me.id,
         toUserId: widget.user.id,
@@ -65,18 +70,13 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
   }
 
   Future<void> _toggleBlock() async {
-    final current = FirebaseAuth.instance.currentUser;
-    if (current == null) {
+    final me = AuthService.instance.currentUser;
+    if (me == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Please log in to manage blocks.')),
       );
       return;
     }
-
-    final me = await AuthService.instance.userChanges.firstWhere(
-      (u) => u != null,
-    );
-    if (me == null) return;
 
     if (_isBlockedByMe) {
       await BlockService.instance.unblock(
@@ -127,8 +127,8 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final currentUser = FirebaseAuth.instance.currentUser;
-    final isMe = currentUser != null && currentUser.uid == widget.user.id;
+    final currentUser = AuthService.instance.currentUser;
+    final isMe = currentUser != null && currentUser.id == widget.user.id;
 
     return Scaffold(
       appBar: AppBar(
@@ -206,6 +206,17 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                             fontWeight: FontWeight.bold,
                           ),
                         ),
+                        const SizedBox(height: 2),
+                        if (_presenceText(widget.user).isNotEmpty)
+                          Text(
+                            _presenceText(widget.user),
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: widget.user.isOnline
+                                  ? Colors.green
+                                  : theme.colorScheme.onSurface
+                                      .withOpacity(0.6),
+                            ),
+                          ),
                         const SizedBox(height: 4),
                         if ((widget.user.bio ?? '').isNotEmpty)
                           Text(
@@ -454,7 +465,7 @@ class _ProfileFollowButtonState extends State<_ProfileFollowButton> {
   }
 
   Future<void> _loadInitial() async {
-    final current = FirebaseAuth.instance.currentUser;
+    final current = AuthService.instance.currentUser;
     if (current == null) return;
 
     setState(() {
@@ -486,7 +497,7 @@ class _ProfileFollowButtonState extends State<_ProfileFollowButton> {
   }
 
   Future<void> _toggle() async {
-    final current = FirebaseAuth.instance.currentUser;
+    final current = AuthService.instance.currentUser;
     if (current == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Please log in to follow users.')),

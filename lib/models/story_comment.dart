@@ -1,5 +1,3 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
-
 class StoryComment {
   final String id;
   final String storyId;
@@ -17,26 +15,28 @@ class StoryComment {
     required this.createdAt,
   });
 
-  factory StoryComment.fromDoc(DocumentSnapshot<Map<String, dynamic>> doc) {
-    final data = doc.data() ?? <String, dynamic>{};
+  factory StoryComment.fromJson(Map<String, dynamic> data) {
     return StoryComment(
-      id: doc.id,
-      storyId: data['storyId'] as String? ?? '',
-      authorId: data['authorId'] as String? ?? '',
+      id: data['id'].toString(),
+      storyId: data['storyId'].toString(),
+      authorId: data['authorId'].toString(),
       authorUsername: data['authorUsername'] as String? ?? '',
       text: data['text'] as String? ?? '',
-      createdAt:
-          (data['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
+      createdAt: DateTime.fromMillisecondsSinceEpoch(
+        (data['createdAt'] as num?)?.toInt() ?? 0,
+        isUtc: false,
+      ),
     );
   }
 
-  Map<String, dynamic> toMap() {
+  Map<String, dynamic> toJson() {
     return {
+      'id': id,
       'storyId': storyId,
       'authorId': authorId,
       'authorUsername': authorUsername,
       'text': text,
-      'createdAt': Timestamp.fromDate(createdAt),
+      'createdAt': createdAt.millisecondsSinceEpoch,
     };
   }
 }
