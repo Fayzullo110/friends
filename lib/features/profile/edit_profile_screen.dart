@@ -1,8 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:video_player/video_player.dart';
 
 import '../../models/app_user.dart';
 import '../../services/auth_service.dart';
+import '../../theme/ios_icons.dart';
+import '../../widgets/safe_network_image.dart';
+import '../chat/gif_picker_sheet.dart';
 
 class EditProfileScreen extends StatefulWidget {
   final AppUser user;
@@ -22,6 +26,16 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   String? _photoUrl;
   String? _backgroundImageUrl;
   bool _isSaving = false;
+  bool _uploadingAvatar = false;
+  bool _uploadingBackground = false;
+
+  bool _isVideoUrl(String url) {
+    final u = url.trim().toLowerCase();
+    return u.endsWith('.mp4') ||
+        u.endsWith('.mov') ||
+        u.endsWith('.m4v') ||
+        u.endsWith('.webm');
+  }
 
   @override
   void initState() {
@@ -41,10 +55,21 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   }
 
   Future<void> _pickAvatar() async {
+    if (_isSaving || _uploadingAvatar || _uploadingBackground) return;
     try {
+      setState(() {
+        _uploadingAvatar = true;
+      });
       final picker = ImagePicker();
       final picked = await picker.pickImage(source: ImageSource.gallery);
-      if (picked == null) return;
+      if (picked == null) {
+        if (mounted) {
+          setState(() {
+            _uploadingAvatar = false;
+          });
+        }
+        return;
+      }
 
       final bytes = await picked.readAsBytes();
       final res = await AuthService.instance.api.uploadFile(
@@ -54,23 +79,125 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       );
       final url = (res['url'] as String?) ?? '';
       if (url.isEmpty) throw Exception('Upload failed');
+
+      await AuthService.instance.api.patchNoContent(
+        '/api/users/me',
+        body: {'photoUrl': url},
+      );
 
       if (!mounted) return;
       setState(() {
         _photoUrl = url;
       });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Profile photo updated.')),
+      );
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Failed to update avatar: $e')),
       );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _uploadingAvatar = false;
+        });
+      }
     }
   }
 
   Future<void> _pickBackground() async {
+    if (_isSaving || _uploadingAvatar || _uploadingBackground) return;
     try {
+      setState(() {
+        _uploadingBackground = true;
+      });
+      final choice = await showModalBottomSheet<String>(
+        context: context,
+        showDragHandle: true,
+        builder: (ctx) {
+          return SafeArea(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                ListTile(
+                  leading: const Icon(Icons.photo_outlined),
+                  title: const Text('Image'),
+                  onTap: () => Navigator.of(ctx).pop('image'),
+                ),
+                ListTile(
+                  leading: const Icon(Icons.gif_box_outlined),
+                  title: const Text('GIF'),
+                  onTap: () => Navigator.of(ctx).pop('gif'),
+                ),
+                ListTile(
+                  leading: const Icon(Icons.videocam_outlined),
+                  title: const Text('Short video (max 5s)'),
+                  onTap: () => Navigator.of(ctx).pop('video'),
+                ),
+                ListTile(
+                  leading: const Icon(IOSIcons.close),
+                  title: const Text('Cancel'),
+                  onTap: () => Navigator.of(ctx).pop(),
+                ),
+              ],
+            ),
+          );
+        },
+      );
+
+      if (choice == null) return;
+
+      if (choice == 'gif') {
+        final selectedUrl = await showModalBottomSheet<String?>(
+          context: context,
+          isScrollControlled: true,
+          showDragHandle: true,
+          builder: (ctx) {
+            return SizedBox(
+              height: MediaQuery.of(ctx).size.height * 0.7,
+              child: GifPickerSheet(
+                onSelected: (gif) {
+                  Navigator.of(ctx).pop(gif.originalUrl);
+                },
+              ),
+            );
+          },
+        );
+
+        if (selectedUrl == null || selectedUrl.trim().isEmpty) return;
+
+        await AuthService.instance.api.patchNoContent(
+          '/api/users/me',
+          body: {'backgroundImageUrl': selectedUrl.trim()},
+        );
+
+        if (!mounted) return;
+        setState(() {
+          _backgroundImageUrl = selectedUrl.trim();
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Background updated.')),
+        );
+        return;
+      }
+
       final picker = ImagePicker();
-      final picked = await picker.pickImage(source: ImageSource.gallery);
+      XFile? picked;
+      if (choice == 'image') {
+        picked = await picker.pickImage(
+          source: ImageSource.gallery,
+          maxWidth: 1600,
+          maxHeight: 800,
+          imageQuality: 85,
+        );
+      } else if (choice == 'video') {
+        picked = await picker.pickVideo(
+          source: ImageSource.gallery,
+          maxDuration: const Duration(seconds: 5),
+        );
+      }
+
       if (picked == null) return;
 
       final bytes = await picked.readAsBytes();
@@ -82,15 +209,35 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       final url = (res['url'] as String?) ?? '';
       if (url.isEmpty) throw Exception('Upload failed');
 
+      await AuthService.instance.api.patchNoContent(
+        '/api/users/me',
+        body: {'backgroundImageUrl': url},
+      );
+
       if (!mounted) return;
       setState(() {
         _backgroundImageUrl = url;
       });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            choice == 'video'
+                ? 'Background video updated.'
+                : 'Background image updated.',
+          ),
+        ),
+      );
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Failed to update background: $e')),
       );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _uploadingBackground = false;
+        });
+      }
     }
   }
 
@@ -184,22 +331,30 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                 CircleAvatar(
                   radius: 50,
                   backgroundColor: theme.colorScheme.primaryContainer,
-                  backgroundImage: _photoUrl != null && _photoUrl!.isNotEmpty
-                      ? NetworkImage(_photoUrl!)
-                      : null,
-                  child: _photoUrl == null || _photoUrl!.isEmpty
-                      ? Icon(
-                          Icons.person,
-                          size: 50,
-                          color: theme.colorScheme.onPrimaryContainer,
-                        )
-                      : null,
+                  child: ClipOval(
+                    child: (_photoUrl != null && _photoUrl!.trim().isNotEmpty)
+                        ? SafeNetworkImage(
+                            url: _photoUrl,
+                            width: 100,
+                            height: 100,
+                            fit: BoxFit.cover,
+                          )
+                        : Center(
+                            child: Icon(
+                              IOSIcons.person,
+                              size: 40,
+                              color: theme.colorScheme.onPrimaryContainer,
+                            ),
+                          ),
+                  ),
                 ),
                 Positioned(
                   bottom: 0,
                   right: 0,
                   child: GestureDetector(
-                    onTap: _pickAvatar,
+                    onTap: (_isSaving || _uploadingAvatar || _uploadingBackground)
+                        ? null
+                        : _pickAvatar,
                     child: Container(
                       width: 36,
                       height: 36,
@@ -229,37 +384,43 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
             const SizedBox(height: 24),
             // Background image preview
             Container(
-              height: 160,
-              width: double.infinity,
+              height: 120,
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(16),
                 color: Colors.grey[200],
-                image: _backgroundImageUrl != null && _backgroundImageUrl!.isNotEmpty
-                    ? DecorationImage(
-                        image: NetworkImage(_backgroundImageUrl!),
-                        fit: BoxFit.cover,
-                      )
-                    : null,
               ),
-              child: _backgroundImageUrl == null || _backgroundImageUrl!.isEmpty
-                  ? Center(
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(Icons.image, size: 48, color: Colors.grey[400]),
-                          const SizedBox(height: 8),
-                          Text(
-                            'Add background image',
-                            style: TextStyle(color: Colors.grey[600]),
-                          ),
-                        ],
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(16),
+                child: (_backgroundImageUrl != null &&
+                        _backgroundImageUrl!.trim().isNotEmpty)
+                    ? _EditProfileBackgroundPreview(
+                        url: _backgroundImageUrl!,
+                        isVideo: _isVideoUrl(_backgroundImageUrl!),
+                      )
+                    : Center(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              IOSIcons.image,
+                              color: Colors.grey[600],
+                              size: 28,
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              'Add background image',
+                              style: TextStyle(color: Colors.grey[600]),
+                            ),
+                          ],
+                        ),
                       ),
-                    )
-                  : null,
+              ),
             ),
             const SizedBox(height: 12),
             GestureDetector(
-              onTap: _pickBackground,
+              onTap: (_isSaving || _uploadingAvatar || _uploadingBackground)
+                  ? null
+                  : _pickBackground,
               child: Text(
                 _backgroundImageUrl != null && _backgroundImageUrl!.isNotEmpty
                     ? 'Change background image'
@@ -326,6 +487,98 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
             ),
             const SizedBox(height: 24),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+class _EditProfileBackgroundPreview extends StatefulWidget {
+  final String url;
+  final bool isVideo;
+
+  const _EditProfileBackgroundPreview({
+    required this.url,
+    required this.isVideo,
+  });
+
+  @override
+  State<_EditProfileBackgroundPreview> createState() =>
+      _EditProfileBackgroundPreviewState();
+}
+
+class _EditProfileBackgroundPreviewState
+    extends State<_EditProfileBackgroundPreview> {
+  VideoPlayerController? _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.isVideo) {
+      final c = VideoPlayerController.networkUrl(Uri.parse(widget.url));
+      _controller = c;
+      c.setLooping(true);
+      c.setVolume(0);
+      c.initialize().then((_) {
+        if (!mounted) return;
+        setState(() {});
+        c.play();
+      });
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant _EditProfileBackgroundPreview oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.url == widget.url && oldWidget.isVideo == widget.isVideo) {
+      return;
+    }
+
+    _controller?.dispose();
+    _controller = null;
+
+    if (widget.isVideo) {
+      final c = VideoPlayerController.networkUrl(Uri.parse(widget.url));
+      _controller = c;
+      c.setLooping(true);
+      c.setVolume(0);
+      c.initialize().then((_) {
+        if (!mounted) return;
+        setState(() {});
+        c.play();
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller?.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!widget.isVideo) {
+      return SafeNetworkImage(
+        url: widget.url,
+        fit: BoxFit.cover,
+        width: double.infinity,
+        height: 120,
+      );
+    }
+
+    final c = _controller;
+    if (c == null || !c.value.isInitialized) {
+      return Container(color: Colors.black12);
+    }
+
+    return ClipRect(
+      child: FittedBox(
+        fit: BoxFit.cover,
+        child: SizedBox(
+          width: c.value.size.width,
+          height: c.value.size.height,
+          child: VideoPlayer(c),
         ),
       ),
     );

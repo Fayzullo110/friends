@@ -1,5 +1,3 @@
-import 'dart:typed_data';
-
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
@@ -243,7 +241,7 @@ class _CreatePostScaffoldState extends State<_CreatePostScaffold> {
   }
 }
 
-class _MediaPlaceholder extends StatelessWidget {
+class _MediaPlaceholder extends StatefulWidget {
   final _PostType type;
   final XFile? file;
   final VoidCallback onPick;
@@ -255,9 +253,27 @@ class _MediaPlaceholder extends StatelessWidget {
   });
 
   @override
+  State<_MediaPlaceholder> createState() => _MediaPlaceholderState();
+}
+
+class _MediaPlaceholderState extends State<_MediaPlaceholder> {
+  String? _bytesForPath;
+  Future<Uint8List>? _bytesFuture;
+
+  @override
+  void didUpdateWidget(covariant _MediaPlaceholder oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final nextPath = widget.file?.path;
+    if (_bytesForPath != null && nextPath != _bytesForPath) {
+      _bytesForPath = null;
+      _bytesFuture = null;
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final isImage = type == _PostType.image;
+    final isImage = widget.type == _PostType.image;
     final icon = isImage
         ? PhosphorIconsLight.image
         : PhosphorIconsLight.playCircle;
@@ -273,7 +289,7 @@ class _MediaPlaceholder extends StatelessWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          if (file != null)
+          if (widget.file != null)
             ClipRRect(
               borderRadius: BorderRadius.circular(20),
               child: AspectRatio(
@@ -283,7 +299,14 @@ class _MediaPlaceholder extends StatelessWidget {
                   children: [
                     if (isImage)
                       FutureBuilder<Uint8List>(
-                        future: file!.readAsBytes(),
+                        future: () {
+                          final path = widget.file!.path;
+                          if (_bytesForPath != path || _bytesFuture == null) {
+                            _bytesForPath = path;
+                            _bytesFuture = widget.file!.readAsBytes();
+                          }
+                          return _bytesFuture;
+                        }(),
                         builder: (context, snap) {
                           if (!snap.hasData) {
                             return const Center(
@@ -344,7 +367,7 @@ class _MediaPlaceholder extends StatelessWidget {
             ),
           const SizedBox(height: 12),
           OutlinedButton.icon(
-            onPressed: onPick,
+            onPressed: widget.onPick,
             icon: const Icon(Icons.folder_open),
             label: Text(isImage ? 'Choose image' : 'Choose video'),
           ),

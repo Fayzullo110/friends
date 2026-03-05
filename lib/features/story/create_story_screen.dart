@@ -1,5 +1,3 @@
-import 'dart:typed_data';
-
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
@@ -8,6 +6,7 @@ import 'package:just_audio/just_audio.dart';
 import '../../services/story_service.dart';
 import '../../services/auth_service.dart';
 import '../../theme/ios_icons.dart';
+import '../../widgets/safe_network_image.dart';
 import '../chat/gif_picker_sheet.dart';
 
 class CreateStoryScreen extends StatefulWidget {
@@ -42,9 +41,13 @@ class _CreateStoryScreenState extends State<CreateStoryScreen> {
     if (_type == _StoryType.image) {
       picked = await _picker.pickImage(source: source);
     } else if (_type == _StoryType.video) {
-      picked = await _picker.pickVideo(source: source);
+      picked = await _picker.pickVideo(
+        source: source,
+        maxDuration: const Duration(seconds: 5),
+      );
     }
     if (picked == null) return;
+
     setState(() {
       _selectedMedia = picked;
       _gifUrl = null;
@@ -296,13 +299,6 @@ class _CreateStoryScreenState extends State<CreateStoryScreen> {
 
     final text = _textController.text.trim();
 
-    if (_type == _StoryType.text && text.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Write something for your story.')),
-      );
-      return;
-    }
-
     if ((_type == _StoryType.image || _type == _StoryType.video) &&
         _selectedMedia == null) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -323,16 +319,7 @@ class _CreateStoryScreenState extends State<CreateStoryScreen> {
     });
 
     try {
-      if (_type == _StoryType.text) {
-        await StoryService.instance.createTextStory(
-          authorId: me.id,
-          authorUsername: me.username,
-          text: text,
-          musicTitle: _musicTitle,
-          musicArtist: _musicArtist,
-          musicUrl: _musicUrl,
-        );
-      } else if (_type == _StoryType.gif) {
+      if (_type == _StoryType.gif) {
         await StoryService.instance.createMediaStory(
           authorId: me.id,
           authorUsername: me.username,
@@ -374,8 +361,15 @@ class _CreateStoryScreenState extends State<CreateStoryScreen> {
       );
     } catch (e) {
       if (!mounted) return;
+      final message = e.toString().replaceFirst('Exception: ', '');
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Failed to share story. Please try again.')),
+        SnackBar(
+          content: Text(
+            message.isEmpty
+                ? 'Failed to share story. Please try again.'
+                : message,
+          ),
+        ),
       );
     } finally {
       if (mounted) {
@@ -414,9 +408,8 @@ class _CreateStoryScreenState extends State<CreateStoryScreen> {
             Wrap(
               spacing: 8,
               children: [
-                _buildTypeChip(theme, _StoryType.text, 'Text'),
                 _buildTypeChip(theme, _StoryType.image, 'Image'),
-                _buildTypeChip(theme, _StoryType.video, 'Video'),
+                _buildTypeChip(theme, _StoryType.video, 'Short video (5s)'),
                 _buildTypeChip(theme, _StoryType.gif, 'GIF'),
               ],
             ),
@@ -503,7 +496,7 @@ class _CreateStoryScreenState extends State<CreateStoryScreen> {
                 label: Text(
                   _type == _StoryType.image
                       ? 'Choose image from gallery'
-                      : 'Choose video from gallery',
+                      : 'Choose video (max 5s)',
                 ),
               )
             else if (_type == _StoryType.gif)
@@ -611,8 +604,8 @@ class _CreateStoryScreenState extends State<CreateStoryScreen> {
       borderRadius: BorderRadius.circular(16),
       child: AspectRatio(
         aspectRatio: 9 / 16,
-        child: Image.network(
-          _gifUrl!,
+        child: SafeNetworkImage(
+          url: _gifUrl,
           fit: BoxFit.cover,
         ),
       ),

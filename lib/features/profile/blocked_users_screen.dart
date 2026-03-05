@@ -4,8 +4,23 @@ import '../../models/app_user.dart';
 import '../../services/auth_service.dart';
 import '../../services/block_service.dart';
 
-class BlockedUsersScreen extends StatelessWidget {
+class BlockedUsersScreen extends StatefulWidget {
   const BlockedUsersScreen({super.key});
+
+  @override
+  State<BlockedUsersScreen> createState() => _BlockedUsersScreenState();
+}
+
+class _BlockedUsersScreenState extends State<BlockedUsersScreen> {
+  int? _blockedIdsSignature;
+  Future<List<AppUser>>? _blockedUsersFuture;
+
+  Future<List<AppUser>> _fetchUsersByIds(List<String> ids) async {
+    final joined = ids.join(',');
+    final rows = await AuthService.instance.api
+        .getListOfMaps('/api/users?ids=$joined');
+    return rows.map(AppUser.fromJson).toList();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -40,13 +55,14 @@ class BlockedUsersScreen extends StatelessWidget {
             );
           }
 
+          final signature = Object.hashAll(ids);
+          if (_blockedIdsSignature != signature || _blockedUsersFuture == null) {
+            _blockedIdsSignature = signature;
+            _blockedUsersFuture = _fetchUsersByIds(ids);
+          }
+
           return FutureBuilder<List<AppUser>>(
-            future: () async {
-              final joined = ids.join(',');
-              final rows = await AuthService.instance.api
-                  .getListOfMaps('/api/users?ids=$joined');
-              return rows.map(AppUser.fromJson).toList();
-            }(),
+            future: _blockedUsersFuture,
             builder: (context, usersSnap) {
               if (usersSnap.connectionState == ConnectionState.waiting) {
                 return const Center(child: CircularProgressIndicator());

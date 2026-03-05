@@ -8,14 +8,21 @@ class ReelService {
 
   static final ReelService instance = ReelService._();
 
-  Stream<List<Reel>> watchReels() {
+  Future<List<Reel>> fetchReelsPage({int page = 0, int limit = 100}) async {
+    final safePage = page < 0 ? 0 : page;
+    final safeLimit = limit < 1 ? 1 : (limit > 200 ? 200 : limit);
+    final rows = await AuthService.instance.api
+        .getListOfMaps('/api/reels?page=$safePage&limit=$safeLimit');
+    return rows.map(Reel.fromJson).toList();
+  }
+
+  Stream<List<Reel>> watchReels({int page = 0, int limit = 100}) {
     final controller = StreamController<List<Reel>>();
     List<Reel>? last;
 
     Future<void> tick() async {
       try {
-        final rows = await AuthService.instance.api.getListOfMaps('/api/reels');
-        final next = rows.map(Reel.fromJson).toList();
+        final next = await fetchReelsPage(page: page, limit: limit);
         if (last == null || !_reelsEqual(last!, next)) {
           last = next;
           controller.add(next);

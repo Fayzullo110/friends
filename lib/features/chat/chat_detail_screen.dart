@@ -1,16 +1,19 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:record/record.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../../models/chat_message.dart';
 import '../../models/app_user.dart';
+import '../../models/story.dart';
 import '../../services/chat_service.dart';
 import '../../services/video_call_service.dart';
 import '../../services/auth_service.dart';
+import '../../services/story_service.dart';
 import '../../theme/ios_icons.dart';
+import '../../widgets/safe_network_image.dart';
+import '../story/story_viewer_screen.dart';
 import 'jitsi_call_screen.dart';
 import 'media_actions_sheet.dart';
 import 'video_player_screen.dart';
@@ -40,16 +43,116 @@ class ChatDetailScreen extends StatefulWidget {
 class _ChatDetailScreenState extends State<ChatDetailScreen> {
   final TextEditingController _controller = TextEditingController();
   final AudioRecorder _voiceRecorder = AudioRecorder();
+  final ScrollController _messagesScrollController = ScrollController();
   bool _isRecording = false;
   RecordMode _recordMode = RecordMode.voice;
   bool _isTyping = false;
   bool _hasText = false;
+  bool _isSending = false;
+
+  String? _directOtherUserIdForFuture;
+  Future<AppUser>? _directOtherUserFuture;
+
+  static const int _pageSize = 50;
+  int _olderOffset = _pageSize;
+  bool _isLoadingOlder = false;
+  bool _hasMoreOlder = true;
+  final List<ChatMessage> _olderMessages = <ChatMessage>[];
+  final Set<String> _seenMessageIds = <String>{};
 
   @override
   void dispose() {
     _controller.dispose();
     _voiceRecorder.dispose();
+    _messagesScrollController.dispose();
     super.dispose();
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _messagesScrollController.addListener(_maybeLoadOlder);
+  }
+
+  void _maybeLoadOlder() {
+    if (_isLoadingOlder || !_hasMoreOlder) return;
+    final pos = _messagesScrollController.position;
+    if (!pos.hasPixels || !pos.hasContentDimensions) return;
+
+    // ListView is reverse:true. When you scroll up to older messages, the
+    // scroll offset approaches maxScrollExtent.
+    if (pos.pixels >= (pos.maxScrollExtent - 300)) {
+      _loadOlder();
+    }
+  }
+
+  Future<void> _loadOlder() async {
+    if (_isLoadingOlder || !_hasMoreOlder) return;
+
+    final double? beforeMaxExtent = _messagesScrollController.hasClients
+        ? _messagesScrollController.position.maxScrollExtent
+        : null;
+    final double? beforePixels = _messagesScrollController.hasClients
+        ? _messagesScrollController.position.pixels
+        : null;
+
+    setState(() {
+      _isLoadingOlder = true;
+    });
+
+    try {
+      final next = await ChatService.instance.fetchMessagesPage(
+        chatId: widget.chatId,
+        limit: _pageSize,
+        offset: _olderOffset,
+      );
+
+      if (!mounted) return;
+
+      final List<ChatMessage> accepted = <ChatMessage>[];
+      for (final m in next) {
+        if (_seenMessageIds.contains(m.id)) continue;
+        _seenMessageIds.add(m.id);
+        accepted.add(m);
+      }
+
+      setState(() {
+        _olderMessages.addAll(accepted);
+        _olderOffset += _pageSize;
+        if (next.length < _pageSize) {
+          _hasMoreOlder = false;
+        }
+      });
+
+      if (_messagesScrollController.hasClients &&
+          beforeMaxExtent != null &&
+          beforePixels != null) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!_messagesScrollController.hasClients) return;
+          final afterMax = _messagesScrollController.position.maxScrollExtent;
+          final delta = afterMax - beforeMaxExtent;
+          if (delta.abs() < 0.5) return;
+          final nextPixels = beforePixels + delta;
+          _messagesScrollController.jumpTo(
+            nextPixels.clamp(
+              _messagesScrollController.position.minScrollExtent,
+              _messagesScrollController.position.maxScrollExtent,
+            ),
+          );
+        });
+      }
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _hasMoreOlder = false;
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoadingOlder = false;
+        });
+      }
+    }
   }
 
   @override
@@ -70,6 +173,13 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
     final appBarFg = isDark ? theme.appBarTheme.foregroundColor : Colors.black;
 
     final String? directOtherId = widget.otherUserId;
+    if (directOtherId != null && _directOtherUserIdForFuture != directOtherId) {
+      _directOtherUserIdForFuture = directOtherId;
+      _directOtherUserFuture = AuthService.instance.api.getJson(
+        '/api/users/$directOtherId',
+        (json) => AppUser.fromJson(json),
+      );
+    }
 
     return Scaffold(
       backgroundColor: isDark ? theme.scaffoldBackgroundColor : lightChatBg,
@@ -95,31 +205,89 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
                 ),
               )
             else
-              FutureBuilder<AppUser>(
-                future: AuthService.instance.api.getJson(
-                  '/api/users/$directOtherId',
-                  (json) => AppUser.fromJson(json),
-                ),
-                builder: (context, snap) {
-                  final u = snap.data;
-                  final photoUrl = u?.photoUrl;
-                  return CircleAvatar(
-                    radius: 18,
-                    backgroundColor:
-                        theme.colorScheme.primary.withOpacity(0.12),
-                    foregroundImage:
-                        (photoUrl != null && photoUrl.isNotEmpty)
-                            ? NetworkImage(photoUrl)
+              StreamBuilder<List<Story>>(
+                stream:
+                    StoryService.instance.watchUserStories(authorId: directOtherId),
+                builder: (context, storySnap) {
+                  final stories = storySnap.data ?? const <Story>[];
+                  final hasStory = stories.isNotEmpty;
+                  final allSeen = hasStory
+                      ? stories.every((s) => s.seenBy.contains(currentUserId))
+                      : false;
+
+                  return FutureBuilder<AppUser>(
+                    future: _directOtherUserFuture,
+                    builder: (context, snap) {
+                      final u = snap.data;
+                      final photoUrl = u?.photoUrl;
+
+                      final avatar = CircleAvatar(
+                        radius: 18,
+                        backgroundColor:
+                            theme.colorScheme.primary.withOpacity(0.12),
+                        child: ClipOval(
+                          child: (photoUrl != null &&
+                                  photoUrl.trim().isNotEmpty)
+                              ? SafeNetworkImage(
+                                  url: photoUrl,
+                                  width: 36,
+                                  height: 36,
+                                  fit: BoxFit.cover,
+                                )
+                              : Center(
+                                  child: Text(
+                                    widget.title.isNotEmpty
+                                        ? widget.title
+                                            .substring(0, 1)
+                                            .toUpperCase()
+                                        : 'C',
+                                    style: TextStyle(
+                                      color: theme.colorScheme.primary,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                ),
+                        ),
+                      );
+
+                      final decorated = hasStory
+                          ? Container(
+                              padding: const EdgeInsets.all(2),
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                gradient: LinearGradient(
+                                  colors: allSeen
+                                      ? <Color>[
+                                          theme.colorScheme.onSurface
+                                              .withOpacity(0.25),
+                                          theme.colorScheme.onSurface
+                                              .withOpacity(0.10),
+                                        ]
+                                      : const <Color>[
+                                          Color(0xFFFE8BCD),
+                                          Color(0xFF8D5CF6),
+                                        ],
+                                ),
+                              ),
+                              child: avatar,
+                            )
+                          : avatar;
+
+                      return GestureDetector(
+                        onTap: hasStory
+                            ? () {
+                                Navigator.of(context).push(
+                                  MaterialPageRoute(
+                                    builder: (_) => StoryViewerScreen(
+                                      stories: List<Story>.from(stories),
+                                    ),
+                                  ),
+                                );
+                              }
                             : null,
-                    child: Text(
-                      widget.title.isNotEmpty
-                          ? widget.title.substring(0, 1).toUpperCase()
-                          : 'C',
-                      style: TextStyle(
-                        color: theme.colorScheme.primary,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
+                        child: decorated,
+                      );
+                    },
                   );
                 },
               ),
@@ -221,9 +389,23 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
           Expanded(
             child: StreamBuilder<List<ChatMessage>>(
               stream:
-                  ChatService.instance.watchMessages(chatId: widget.chatId),
+                  ChatService.instance.watchMessages(
+                chatId: widget.chatId,
+                limit: _pageSize,
+                offset: 0,
+              ),
               builder: (context, snapshot) {
-                final messages = snapshot.data ?? [];
+                final live = snapshot.data ?? const <ChatMessage>[];
+
+                // Maintain a global seen-set to avoid duplicates when merging.
+                for (final m in live) {
+                  _seenMessageIds.add(m.id);
+                }
+
+                final List<ChatMessage> messages = <ChatMessage>[
+                  ...live,
+                  ..._olderMessages,
+                ];
                 if (messages.isEmpty) {
                   return Center(
                     child: Text(
@@ -249,17 +431,58 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
                 }
 
                 return ListView.builder(
+                  controller: _messagesScrollController,
                   reverse: true,
                   padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-                  itemCount: messages.length,
+                  itemCount: messages.length + 1,
                   itemBuilder: (context, index) {
+                    if (index >= messages.length) {
+                      if (_isLoadingOlder) {
+                        return const Padding(
+                          padding: EdgeInsets.symmetric(vertical: 12),
+                          child: Center(
+                            child: SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            ),
+                          ),
+                        );
+                      }
+                      if (!_hasMoreOlder) {
+                        return const Padding(
+                          padding: EdgeInsets.symmetric(vertical: 12),
+                          child: Center(
+                            child: Text(
+                              'No more messages',
+                              style: TextStyle(color: Colors.black45),
+                            ),
+                          ),
+                        );
+                      }
+
+                      // A stable top-of-history indicator. Auto-load is driven
+                      // by the scroll listener; this provides a manual fallback.
+                      return Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 10),
+                        child: Center(
+                          child: TextButton(
+                            onPressed: _loadOlder,
+                            child: const Text('Load older messages'),
+                          ),
+                        ),
+                      );
+                    }
+
                     final m = messages[index];
                     final isMe = m.senderId == currentUserId;
+
                     return _ChatBubble(
                       message: m,
                       isMe: isMe,
                       chatId: widget.chatId,
                       currentUserId: currentUserId,
+                      senderPhotoUrl: isMe ? null : m.senderPhotoUrl,
                       onLongPress: () {
                         _showReactionsBar(m.id, currentUserId);
                       },
@@ -291,7 +514,9 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
                 child: Row(
                   children: [
                     IconButton(
-                      onPressed: () {
+                      onPressed: _isSending
+                          ? null
+                          : () {
                         showModalBottomSheet(
                           context: context,
                           isScrollControlled: true,
@@ -305,7 +530,8 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
                       child: TextField(
                         controller: _controller,
                         textInputAction: TextInputAction.send,
-                        onSubmitted: (_) => _send(currentUserId),
+                        enabled: !_isSending,
+                        onSubmitted: _isSending ? null : (_) => _send(currentUserId),
                         onChanged: (value) {
                           final trimmed = value.trim();
                           final isNowTyping = trimmed.isNotEmpty;
@@ -333,14 +559,18 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
                     const SizedBox(width: 4),
                     if (!_hasText) ...[
                       GestureDetector(
-                        onTap: () {
+                        onTap: _isSending
+                            ? null
+                            : () {
                           setState(() {
                             _recordMode = _recordMode == RecordMode.voice
                                 ? RecordMode.video
                                 : RecordMode.voice;
                           });
                         },
-                        onLongPress: () {
+                        onLongPress: _isSending
+                            ? null
+                            : () {
                           if (_recordMode == RecordMode.voice) {
                             _toggleVoiceRecord(currentUserId);
                           } else {
@@ -381,12 +611,22 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
                           color: theme.colorScheme.primary,
                         ),
                         child: IconButton(
-                          onPressed: () => _send(currentUserId),
-                          icon: const Icon(
-                            IOSIcons.send,
-                            size: 18,
-                            color: Colors.white,
-                          ),
+                          onPressed: _isSending ? null : () => _send(currentUserId),
+                          icon: _isSending
+                              ? const SizedBox(
+                                  width: 18,
+                                  height: 18,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    valueColor:
+                                        AlwaysStoppedAnimation<Color>(Colors.white),
+                                  ),
+                                )
+                              : const Icon(
+                                  IOSIcons.send,
+                                  size: 18,
+                                  color: Colors.white,
+                                ),
                         ),
                       ),
                     ],
@@ -398,6 +638,22 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
         ],
       ),
     );
+  }
+
+  Future<void> _runSend(Future<void> Function() work) async {
+    if (_isSending) return;
+    setState(() {
+      _isSending = true;
+    });
+    try {
+      await work();
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isSending = false;
+        });
+      }
+    }
   }
 
   Future<void> _send(String currentUserId) async {
@@ -419,21 +675,24 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
       );
     }
 
-    try {
-      await ChatService.instance.sendText(
-        chatId: widget.chatId,
-        senderId: currentUserId,
-        text: text,
-      );
-    } on Exception {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Failed to send message.')),
-      );
-    }
+    await _runSend(() async {
+      try {
+        await ChatService.instance.sendText(
+          chatId: widget.chatId,
+          senderId: currentUserId,
+          text: text,
+        );
+      } on Exception {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Failed to send message.')),
+        );
+      }
+    });
   }
 
   Future<void> _toggleVoiceRecord(String currentUserId) async {
+    if (_isSending) return;
     if (kIsWeb) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -492,19 +751,21 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
         //     .child(fileName);
         // await storageRef.putData(bytes);
         // final url = await storageRef.getDownloadURL();
-        final upload = await AuthService.instance.api.uploadFile(
-          path: '/api/uploads',
-          bytes: bytes,
-          filename: fileName,
-        );
-        final url = (upload['url'] as String?) ?? '';
-        if (url.isEmpty) throw Exception('Upload failed');
+        await _runSend(() async {
+          final upload = await AuthService.instance.api.uploadFile(
+            path: '/api/uploads',
+            bytes: bytes,
+            filename: fileName,
+          );
+          final url = (upload['url'] as String?) ?? '';
+          if (url.isEmpty) throw Exception('Upload failed');
 
-        await ChatService.instance.sendVoice(
-          chatId: widget.chatId,
-          senderId: currentUserId,
-          audioUrl: url,
-        );
+          await ChatService.instance.sendVoice(
+            chatId: widget.chatId,
+            senderId: currentUserId,
+            audioUrl: url,
+          );
+        });
       }
     } catch (_) {
       if (!mounted) return;
@@ -515,6 +776,7 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
   }
 
   Future<void> _startVideoCapture(String currentUserId) async {
+    if (_isSending) return;
     if (kIsWeb) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -541,19 +803,21 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
 
       // final task = await storageRef.putData(bytes);
       // final url = await task.ref.getDownloadURL();
-      final upload = await AuthService.instance.api.uploadFile(
-        path: '/api/uploads',
-        bytes: bytes,
-        filename: 'video_${DateTime.now().millisecondsSinceEpoch}.mp4',
-      );
-      final url = (upload['url'] as String?) ?? '';
-      if (url.isEmpty) throw Exception('Upload failed');
+      await _runSend(() async {
+        final upload = await AuthService.instance.api.uploadFile(
+          path: '/api/uploads',
+          bytes: bytes,
+          filename: 'video_${DateTime.now().millisecondsSinceEpoch}.mp4',
+        );
+        final url = (upload['url'] as String?) ?? '';
+        if (url.isEmpty) throw Exception('Upload failed');
 
-      await ChatService.instance.sendVideo(
-        chatId: widget.chatId,
-        senderId: currentUserId,
-        videoUrl: url,
-      );
+        await ChatService.instance.sendVideo(
+          chatId: widget.chatId,
+          senderId: currentUserId,
+          videoUrl: url,
+        );
+      });
     } catch (_) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -663,6 +927,7 @@ class _ChatBubble extends StatelessWidget {
   final bool isMe;
   final String chatId;
   final String currentUserId;
+  final String? senderPhotoUrl;
   final VoidCallback? onLongPress;
 
   const _ChatBubble({
@@ -670,6 +935,7 @@ class _ChatBubble extends StatelessWidget {
     required this.isMe,
     required this.chatId,
     required this.currentUserId,
+    required this.senderPhotoUrl,
     this.onLongPress,
   });
 
@@ -680,85 +946,117 @@ class _ChatBubble extends StatelessWidget {
     final isDark = theme.brightness == Brightness.dark;
 
     final bubbleColor = isMe
-        ? (isDark
-            ? theme.colorScheme.primary
-            : const Color(0xFF7B61FF))
+        ? (isDark ? theme.colorScheme.primary : const Color(0xFF7B61FF))
         : (isDark ? theme.colorScheme.surface : Colors.white);
 
-    final textColor = isMe
-        ? theme.colorScheme.onPrimary
-        : theme.colorScheme.onSurface;
-
+    final textColor = isMe ? theme.colorScheme.onPrimary : theme.colorScheme.onSurface;
     final onSurface = theme.colorScheme.onSurface;
 
-    final anyOtherSeen =
-        message.seenBy.any((uid) => uid != currentUserId);
-    final statusText = isMe
-        ? (anyOtherSeen ? '✓✓' : '✓')
-        : '';
+    final anyOtherSeen = message.seenBy.any((uid) => uid != currentUserId);
+    final statusText = isMe ? (anyOtherSeen ? '✓✓' : '✓') : '';
 
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      child: Column(
-        crossAxisAlignment: alignment,
-        children: [
-          GestureDetector(
-            onLongPress: onLongPress,
-            child: Container(
-              constraints: const BoxConstraints(maxWidth: 320),
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-              decoration: BoxDecoration(
-                color: bubbleColor,
-                borderRadius: BorderRadius.circular(18),
-              ),
-              child: _buildContent(context, textColor),
+    final bubble = Column(
+      crossAxisAlignment: alignment,
+      children: [
+        GestureDetector(
+          onLongPress: onLongPress,
+          child: Container(
+            constraints: const BoxConstraints(maxWidth: 320),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            decoration: BoxDecoration(
+              color: bubbleColor,
+              borderRadius: BorderRadius.circular(18),
             ),
+            child: _buildContent(context, textColor),
           ),
-          const SizedBox(height: 4),
-          if (message.reactions.isNotEmpty)
-            Wrap(
-              spacing: 4,
-              runSpacing: 2,
-              alignment: isMe ? WrapAlignment.end : WrapAlignment.start,
-              children: [
-                for (final entry in message.reactions.entries)
-                  _ReactionChip(
-                    emoji: entry.key,
-                    count: entry.value.length,
-                    isMine: entry.value.contains(currentUserId),
-                    isMe: isMe,
-                    onSurface: onSurface,
-                    primary: theme.colorScheme.primary,
-                  ),
-              ],
-            ),
-          if (message.reactions.isNotEmpty) const SizedBox(height: 2),
-          Row(
-            mainAxisSize: MainAxisSize.min,
+        ),
+        const SizedBox(height: 4),
+        if (message.reactions.isNotEmpty)
+          Wrap(
+            spacing: 4,
+            runSpacing: 2,
+            alignment: isMe ? WrapAlignment.end : WrapAlignment.start,
             children: [
+              for (final entry in message.reactions.entries)
+                _ReactionChip(
+                  emoji: entry.key,
+                  count: entry.value.length,
+                  isMine: entry.value.contains(currentUserId),
+                  isMe: isMe,
+                  onSurface: onSurface,
+                  primary: theme.colorScheme.primary,
+                ),
+            ],
+          ),
+        if (message.reactions.isNotEmpty) const SizedBox(height: 2),
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              _formatTime(message.createdAt),
+              style: theme.textTheme.labelSmall?.copyWith(
+                color: theme.colorScheme.onSurface.withOpacity(0.5),
+                fontSize: 10,
+              ),
+            ),
+            if (isMe) ...[
+              const SizedBox(width: 4),
               Text(
-                _formatTime(message.createdAt),
+                statusText,
                 style: theme.textTheme.labelSmall?.copyWith(
-                  color:
-                      theme.colorScheme.onSurface.withOpacity(0.5),
+                  color: anyOtherSeen
+                      ? theme.colorScheme.primary
+                      : theme.colorScheme.onSurface.withOpacity(0.5),
                   fontSize: 10,
                 ),
               ),
-              if (isMe) ...[
-                const SizedBox(width: 4),
-                Text(
-                  statusText,
-                  style: theme.textTheme.labelSmall?.copyWith(
-                    color: anyOtherSeen
-                        ? theme.colorScheme.primary
-                        : theme.colorScheme.onSurface
-                            .withOpacity(0.5),
-                    fontSize: 10,
-                  ),
-                ),
-              ],
             ],
+          ],
+        ),
+      ],
+    );
+
+    if (isMe) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        child: bubble,
+      );
+    }
+
+    final username = message.senderUsername;
+    final initial =
+        username.isNotEmpty ? username.substring(0, 1).toUpperCase() : 'U';
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          CircleAvatar(
+            radius: 14,
+            backgroundColor: theme.colorScheme.primary.withOpacity(0.12),
+            child: ClipOval(
+              child: (senderPhotoUrl != null && senderPhotoUrl!.trim().isNotEmpty)
+                  ? SafeNetworkImage(
+                      url: senderPhotoUrl,
+                      width: 28,
+                      height: 28,
+                      fit: BoxFit.cover,
+                    )
+                  : Center(
+                      child: Text(
+                        initial,
+                        style: TextStyle(
+                          color: theme.colorScheme.primary,
+                          fontWeight: FontWeight.w700,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ),
+            ),
           ),
+          const SizedBox(width: 8),
+          Flexible(child: bubble),
         ],
       ),
     );
@@ -778,8 +1076,8 @@ class _ChatBubble extends StatelessWidget {
         }
         return ClipRRect(
           borderRadius: BorderRadius.circular(12),
-          child: CachedNetworkImage(
-            imageUrl: message.mediaUrl!,
+          child: SafeNetworkImage(
+            url: message.mediaUrl,
             fit: BoxFit.cover,
           ),
         );
@@ -789,8 +1087,8 @@ class _ChatBubble extends StatelessWidget {
         }
         return ClipRRect(
           borderRadius: BorderRadius.circular(12),
-          child: CachedNetworkImage(
-            imageUrl: message.mediaUrl!,
+          child: SafeNetworkImage(
+            url: message.mediaUrl,
             fit: BoxFit.cover,
           ),
         );
@@ -811,8 +1109,8 @@ class _ChatBubble extends StatelessWidget {
             children: [
               AspectRatio(
                 aspectRatio: 16 / 9,
-                child: CachedNetworkImage(
-                  imageUrl: message.mediaUrl!,
+                child: SafeNetworkImage(
+                  url: message.mediaUrl,
                   fit: BoxFit.cover,
                 ),
               ),

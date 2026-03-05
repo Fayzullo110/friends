@@ -98,7 +98,7 @@ class ChatService {
     }
 
     tick();
-    final timer = Timer.periodic(const Duration(seconds: 6), (_) => tick());
+    final timer = Timer.periodic(const Duration(seconds: 15), (_) => tick());
     controller.onCancel = () {
       timer.cancel();
       controller.close();
@@ -114,22 +114,18 @@ class ChatService {
     final controller = StreamController<int>();
     int? last;
 
+    Future<int> fetch() async {
+      final res = await AuthService.instance.api.getJson(
+        '/api/chats/unread-count',
+        (json) => json,
+      );
+      final raw = (res['count'] as num?) ?? 0;
+      return raw.toInt();
+    }
+
     Future<void> tick() async {
       try {
-        final rows = await AuthService.instance.api.getListOfMaps('/api/chats');
-        final chats = rows.map(Chat.fromJson).toList();
-        var unread = 0;
-        for (final c in chats) {
-          try {
-            final msgs = await AuthService.instance.api
-                .getListOfMaps('/api/chats/${c.id}/messages');
-            if (msgs.isEmpty) continue;
-            final m = ChatMessage.fromJson(msgs.first);
-            if (m.senderId != uid && !m.seenBy.contains(uid)) unread++;
-          } catch (_) {
-            // ignore
-          }
-        }
+        final unread = await fetch();
         if (last == null || last != unread) {
           last = unread;
           controller.add(unread);
@@ -217,7 +213,30 @@ class ChatService {
         .toList();
   }
 
-  Stream<List<ChatMessage>> watchMessages({required String chatId}) {
+  Future<List<ChatMessage>> fetchMessagesPage({
+    required String chatId,
+    int limit = 100,
+    int offset = 0,
+  }) async {
+    if (!_isBackendChatId(chatId)) {
+      return const <ChatMessage>[];
+    }
+
+    final safeLimit = limit < 1 ? 1 : (limit > 200 ? 200 : limit);
+    final safeOffset = offset < 0 ? 0 : offset;
+
+    final rows = await AuthService.instance.api.getListOfMaps(
+      '/api/chats/$chatId/messages?limit=$safeLimit&offset=$safeOffset',
+    );
+    return rows.map(ChatMessage.fromJson).toList();
+  }
+
+  Stream<List<ChatMessage>> watchMessages({
+    required String chatId,
+    int limit = 100,
+    int offset = 0,
+    Duration pollInterval = const Duration(seconds: 6),
+  }) {
     if (!_isBackendChatId(chatId)) {
       return Stream.value(const <ChatMessage>[]);
     }
@@ -226,9 +245,11 @@ class ChatService {
 
     Future<void> tick() async {
       try {
-        final rows = await AuthService.instance.api
-            .getListOfMaps('/api/chats/$chatId/messages');
-        final next = rows.map(ChatMessage.fromJson).toList();
+        final next = await fetchMessagesPage(
+          chatId: chatId,
+          limit: limit,
+          offset: offset,
+        );
         if (last == null || !_messagesEqual(last!, next)) {
           last = next;
           controller.add(next);
@@ -239,7 +260,7 @@ class ChatService {
     }
 
     tick();
-    final timer = Timer.periodic(const Duration(seconds: 6), (_) => tick());
+    final timer = Timer.periodic(pollInterval, (_) => tick());
     controller.onCancel = () {
       timer.cancel();
       controller.close();

@@ -4,6 +4,7 @@ import '../../models/post.dart';
 import '../../services/auth_service.dart';
 import '../../services/post_service.dart';
 import '../../theme/ios_icons.dart';
+import '../../widgets/safe_network_image.dart';
 
 class ArchivedPostsScreen extends StatelessWidget {
   const ArchivedPostsScreen({super.key});
@@ -48,17 +49,23 @@ class ArchivedPostsScreen extends StatelessWidget {
               return Card(
                 child: ListTile(
                   leading: CircleAvatar(
-                    backgroundImage:
-                        (p.authorPhotoUrl != null && p.authorPhotoUrl!.isNotEmpty)
-                            ? NetworkImage(p.authorPhotoUrl!)
-                            : null,
-                    child: (p.authorPhotoUrl == null || p.authorPhotoUrl!.isEmpty)
-                        ? Text(
-                            p.authorUsername.isNotEmpty
-                                ? p.authorUsername[0].toUpperCase()
-                                : 'U',
-                          )
-                        : null,
+                    child: ClipOval(
+                      child: (p.authorPhotoUrl != null &&
+                              p.authorPhotoUrl!.trim().isNotEmpty)
+                          ? SafeNetworkImage(
+                              url: p.authorPhotoUrl,
+                              width: 40,
+                              height: 40,
+                              fit: BoxFit.cover,
+                            )
+                          : Center(
+                              child: Text(
+                                p.authorUsername.isNotEmpty
+                                    ? p.authorUsername[0].toUpperCase()
+                                    : 'U',
+                              ),
+                            ),
+                    ),
                   ),
                   title: Text(
                     p.text.isEmpty ? '(no text)' : p.text,

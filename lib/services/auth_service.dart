@@ -40,14 +40,24 @@ class AuthService {
       _currentUser = user;
       _userController.add(user);
     } catch (e) {
-      debugPrint('[AuthService] Failed to load /me: $e');
+      final msg = e.toString();
+      if (msg.contains('Unauthorized')) {
+        // Expected when token is missing/expired; keep logs quiet.
+      } else {
+        debugPrint('[AuthService] Failed to load /me: $e');
+      }
       await logout(); // clear token if invalid
     }
   }
 
   Future<void> initFromStoredToken() async {
     try {
-      await _loadMe();
+      final token = await _api.getStoredToken();
+      if (token == null || token.trim().isEmpty) {
+        _currentUser = null;
+      } else {
+        await _loadMe();
+      }
     } catch (e) {
       debugPrint('[AuthService] No stored token or invalid: $e');
     }

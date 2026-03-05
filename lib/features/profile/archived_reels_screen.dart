@@ -4,6 +4,7 @@ import '../../models/reel.dart';
 import '../../services/auth_service.dart';
 import '../../services/reel_service.dart';
 import '../../theme/ios_icons.dart';
+import '../../widgets/safe_network_image.dart';
 import '../reels/reels_screen.dart';
 
 class ArchivedReelsScreen extends StatelessWidget {
@@ -67,20 +68,24 @@ class ArchivedReelsScreen extends StatelessWidget {
                   },
                   leading: CircleAvatar(
                     backgroundColor: theme.colorScheme.surfaceVariant,
-                    backgroundImage: (r.mediaType == 'image' &&
-                            r.mediaUrl != null &&
-                            r.mediaUrl!.isNotEmpty)
-                        ? NetworkImage(r.mediaUrl!)
-                        : null,
-                    child: (r.mediaType == 'image' &&
-                            r.mediaUrl != null &&
-                            r.mediaUrl!.isNotEmpty)
-                        ? null
-                        : Icon(
-                            r.mediaType == 'video'
-                                ? IOSIcons.playCircleFill
-                                : IOSIcons.film,
-                          ),
+                    child: ClipOval(
+                      child: (r.mediaType == 'image' &&
+                              r.mediaUrl != null &&
+                              r.mediaUrl!.trim().isNotEmpty)
+                          ? SafeNetworkImage(
+                              url: r.mediaUrl,
+                              width: 40,
+                              height: 40,
+                              fit: BoxFit.cover,
+                            )
+                          : Center(
+                              child: Icon(
+                                r.mediaType == 'video'
+                                    ? IOSIcons.playCircleFill
+                                    : IOSIcons.film,
+                              ),
+                            ),
+                    ),
                   ),
                   title: Text(
                     r.caption.isEmpty ? '(no caption)' : r.caption,

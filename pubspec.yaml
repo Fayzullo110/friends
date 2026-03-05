@@ -64,6 +64,9 @@ dependencies:
   # Modern icon set
   phosphor_flutter: ^2.1.0
 
+  # Native share sheets
+  share_plus: ^10.0.2
+
   # URL launcher (used for video calls via Jitsi in browser)
   url_launcher: ^6.2.5
 

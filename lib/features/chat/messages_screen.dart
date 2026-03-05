@@ -7,12 +7,12 @@ import '../status/create_status_screen.dart';
 import '../status/status_viewer_screen.dart';
 import '../../models/chat.dart';
 import '../../models/user_status.dart';
-import '../../models/app_user.dart';
 import '../../services/chat_service.dart';
 import '../../services/auth_service.dart';
 import '../../services/follow_service.dart';
 import '../../services/user_status_service.dart';
 import '../../theme/ios_icons.dart';
+import '../../widgets/safe_network_image.dart';
 
 class MessagesScreen extends StatefulWidget {
   const MessagesScreen({super.key});
@@ -23,6 +23,9 @@ class MessagesScreen extends StatefulWidget {
 
 class _MessagesScreenState extends State<MessagesScreen> {
   String _filter = 'all';
+
+  String? _followingForId;
+  Future<List<String>>? _followingFuture;
 
   @override
   Widget build(BuildContext context) {
@@ -124,20 +127,72 @@ class _MessagesScreenState extends State<MessagesScreen> {
             child: StreamBuilder<List<Chat>>(
               stream: ChatService.instance.watchMyChats(uid: me.id),
               builder: (context, snapshot) {
+                final isLoading =
+                    snapshot.connectionState == ConnectionState.waiting;
                 var chats = snapshot.data ?? [];
                 if (_filter == 'chats') {
                   chats = chats.where((c) => !c.isGroup).toList();
                 } else if (_filter == 'groups') {
                   chats = chats.where((c) => c.isGroup).toList();
                 }
+
+                if (isLoading && snapshot.data == null) {
+                  return const Center(
+                    child: SizedBox(
+                      width: 24,
+                      height: 24,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                  );
+                }
                 if (chats.isEmpty) {
                   // Still show Saved messages entry even if there are no other chats.
-                  return ListView.separated(
-                    itemCount: 1,
-                    separatorBuilder: (_, __) => const Divider(height: 0),
-                    itemBuilder: (context, index) {
-                      return _buildSavedMessagesTile(context, theme);
-                    },
+                  return ListView(
+                    children: [
+                      _buildSavedMessagesTile(context, theme),
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 24, 16, 0),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              IOSIcons.chatBubbleOutline,
+                              size: 40,
+                              color: theme.colorScheme.onSurface
+                                  .withOpacity(0.55),
+                            ),
+                            const SizedBox(height: 12),
+                            Text(
+                              'No chats yet',
+                              style: theme.textTheme.titleSmall?.copyWith(
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              'Start a conversation to see it here.',
+                              textAlign: TextAlign.center,
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                color: theme.colorScheme.onSurface
+                                    .withOpacity(0.65),
+                              ),
+                            ),
+                            const SizedBox(height: 14),
+                            FilledButton.icon(
+                              onPressed: () {
+                                Navigator.of(context).push(
+                                  MaterialPageRoute(
+                                    builder: (_) => const NewMessageScreen(),
+                                  ),
+                                );
+                              },
+                              icon: const Icon(IOSIcons.editOutlined, size: 18),
+                              label: const Text('New message'),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
                   );
                 }
 
@@ -154,6 +209,7 @@ class _MessagesScreenState extends State<MessagesScreen> {
                       orElse: () => me.id,
                     );
                     final title = c.memberUsernames[otherId] ?? 'Chat';
+                    final photoUrl = c.memberPhotoUrls[otherId];
 
                     return ListTile(
                       contentPadding:
@@ -173,34 +229,30 @@ class _MessagesScreenState extends State<MessagesScreen> {
                                 ),
                               ),
                             )
-                          : FutureBuilder<AppUser>(
-                              future: AuthService.instance.api.getJson(
-                                '/api/users/$otherId',
-                                (json) => AppUser.fromJson(json),
+                          : CircleAvatar(
+                              radius: 22,
+                              backgroundColor:
+                                  theme.colorScheme.primary.withOpacity(0.08),
+                              child: ClipOval(
+                                child: (photoUrl != null && photoUrl.isNotEmpty)
+                                    ? SafeNetworkImage(
+                                        url: photoUrl,
+                                        width: 44,
+                                        height: 44,
+                                        fit: BoxFit.cover,
+                                      )
+                                    : Center(
+                                        child: Text(
+                                          title.isNotEmpty
+                                              ? title[0].toUpperCase()
+                                              : 'C',
+                                          style: TextStyle(
+                                            color: theme.colorScheme.primary,
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                        ),
+                                      ),
                               ),
-                              builder: (context, snap) {
-                                final u = snap.data;
-                                final photoUrl = u?.photoUrl;
-                                return CircleAvatar(
-                                  radius: 22,
-                                  backgroundColor: theme
-                                      .colorScheme.primary
-                                      .withOpacity(0.08),
-                                  foregroundImage:
-                                      (photoUrl != null && photoUrl.isNotEmpty)
-                                          ? NetworkImage(photoUrl)
-                                          : null,
-                                  child: Text(
-                                    title.isNotEmpty
-                                        ? title[0].toUpperCase()
-                                        : 'C',
-                                    style: TextStyle(
-                                      color: theme.colorScheme.primary,
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                                  ),
-                                );
-                              },
                             ),
                       title: Text(
                         title,
@@ -274,8 +326,12 @@ class _MessagesScreenState extends State<MessagesScreen> {
   }
 
   Widget _buildFriendsRow(BuildContext context, ThemeData theme, String currentUserId) {
+    if (_followingForId != currentUserId || _followingFuture == null) {
+      _followingForId = currentUserId;
+      _followingFuture = _getFollowingIds(currentUserId);
+    }
     return FutureBuilder<List<String>>(
-      future: _getFollowingIds(currentUserId),
+      future: _followingFuture,
       builder: (context, followingSnapshot) {
         final followingIds = followingSnapshot.data ?? [];
 
@@ -440,21 +496,28 @@ class _MessagesScreenState extends State<MessagesScreen> {
                 backgroundColor: isDark
                     ? theme.colorScheme.surfaceVariant
                     : Colors.grey.shade200,
-                backgroundImage: status.photoUrl != null
-                    ? NetworkImage(status.photoUrl!)
-                    : null,
-                child: status.photoUrl == null
-                    ? Text(
-                        status.username.isNotEmpty
-                            ? status.username[0].toUpperCase()
-                            : '?',
-                        style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.w600,
-                          color: theme.colorScheme.onSurface,
+                child: ClipOval(
+                  child: (status.photoUrl != null &&
+                          status.photoUrl!.trim().isNotEmpty)
+                      ? SafeNetworkImage(
+                          url: status.photoUrl,
+                          width: 52,
+                          height: 52,
+                          fit: BoxFit.cover,
+                        )
+                      : Center(
+                          child: Text(
+                            status.username.isNotEmpty
+                                ? status.username[0].toUpperCase()
+                                : '?',
+                            style: TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.w600,
+                              color: theme.colorScheme.onSurface,
+                            ),
+                          ),
                         ),
-                      )
-                    : null,
+                ),
               ),
             ),
           ),

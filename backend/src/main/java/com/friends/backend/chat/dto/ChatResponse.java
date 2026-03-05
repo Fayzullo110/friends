@@ -8,6 +8,7 @@ public class ChatResponse {
   public long id;
   public List<Long> members;
   public Map<Long, String> memberUsernames;
+  public Map<Long, String> memberPhotoUrls;
   public String lastMessage;
   public long updatedAt;
   public boolean isGroup;
@@ -17,6 +18,7 @@ public class ChatResponse {
       long id,
       List<Long> members,
       Map<Long, String> memberUsernames,
+      Map<Long, String> memberPhotoUrls,
       String lastMessage,
       Instant updatedAt,
       boolean isGroup,
@@ -24,6 +26,7 @@ public class ChatResponse {
     this.id = id;
     this.members = members;
     this.memberUsernames = memberUsernames;
+    this.memberPhotoUrls = memberPhotoUrls;
     this.lastMessage = lastMessage;
     this.updatedAt = updatedAt == null ? 0L : updatedAt.toEpochMilli();
     this.isGroup = isGroup;

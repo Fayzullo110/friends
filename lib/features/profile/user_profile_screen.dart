@@ -5,6 +5,7 @@ import '../../services/follow_service.dart';
 import '../../services/post_service.dart';
 import '../../services/auth_service.dart';
 import '../../services/block_service.dart';
+import '../../widgets/safe_network_image.dart';
 
 class UserProfileScreen extends StatefulWidget {
   final AppUser user;
@@ -180,9 +181,12 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                                 ),
                               ),
                               child: ClipOval(
-                                child: widget.user.photoUrl != null
-                                    ? Image.network(
-                                        widget.user.photoUrl!,
+                                child: widget.user.photoUrl != null &&
+                                        widget.user.photoUrl!.trim().isNotEmpty
+                                    ? SafeNetworkImage(
+                                        url: widget.user.photoUrl,
+                                        width: 72,
+                                        height: 72,
                                         fit: BoxFit.cover,
                                       )
                                     : Icon(
@@ -316,7 +320,14 @@ class _HeaderStats extends StatelessWidget {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
-        const _ProfileStat(label: 'Posts', value: '0'),
+        StreamBuilder<int>(
+          stream:
+              PostService.instance.watchPostCountByAuthor(authorId: user.id),
+          builder: (context, snapshot) {
+            final count = snapshot.data ?? 0;
+            return _ProfileStat(label: 'Posts', value: count.toString());
+          },
+        ),
         _FollowersStat(user: user),
         _FollowingStat(user: user),
       ],
@@ -334,11 +345,9 @@ class _UserPostsSliver extends StatelessWidget {
     final theme = Theme.of(context);
     return SliverToBoxAdapter(
       child: StreamBuilder<List<Post>>(
-        stream: PostService.instance
-            .watchRecentPosts(), // filter client-side for now
+        stream: PostService.instance.watchPostsByAuthor(authorId: userId),
         builder: (context, snapshot) {
-          final posts =
-              (snapshot.data ?? []).where((p) => p.authorId == userId).toList();
+          final posts = snapshot.data ?? const <Post>[];
 
           if (posts.isEmpty) {
             return Padding(

@@ -15,9 +15,6 @@ class CreateStatusScreen extends StatefulWidget {
 }
 
 class _CreateStatusScreenState extends State<CreateStatusScreen> {
-  final _textController = TextEditingController();
-  final _focusNode = FocusNode();
-
   String? _selectedEmoji;
   String? _musicTitle;
   String? _musicArtist;
@@ -55,8 +52,6 @@ class _CreateStatusScreenState extends State<CreateStatusScreen> {
 
   @override
   void dispose() {
-    _textController.dispose();
-    _focusNode.dispose();
     super.dispose();
   }
 
@@ -248,10 +243,10 @@ class _CreateStatusScreenState extends State<CreateStatusScreen> {
   }
 
   Future<void> _submit() async {
-    final text = _textController.text.trim();
-    if (text.isEmpty && _selectedEmoji == null) {
+    final emoji = _selectedEmoji;
+    if (emoji == null || emoji.trim().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Add some text or an emoji')),
+        const SnackBar(content: Text('Pick an emoji')),
       );
       return;
     }
@@ -271,8 +266,8 @@ class _CreateStatusScreenState extends State<CreateStatusScreen> {
         userId: me.id,
         username: me.username,
         photoUrl: me.photoUrl,
-        text: text,
-        emoji: _selectedEmoji,
+        text: emoji,
+        emoji: emoji,
         musicTitle: _musicTitle,
         musicArtist: _musicArtist,
         musicUrl: _musicUrl,
@@ -327,7 +322,7 @@ class _CreateStatusScreenState extends State<CreateStatusScreen> {
             )
           else
             TextButton(
-              onPressed: _submit,
+              onPressed: _selectedEmoji == null ? null : _submit,
               child: const Text('Share'),
             ),
         ],
@@ -359,15 +354,6 @@ class _CreateStatusScreenState extends State<CreateStatusScreen> {
                           Text(
                             _selectedEmoji!,
                             style: const TextStyle(fontSize: 48),
-                          ),
-                        if (_textController.text.isNotEmpty)
-                          Text(
-                            _textController.text,
-                            style: theme.textTheme.titleMedium?.copyWith(
-                              color: Colors.white,
-                              fontWeight: FontWeight.w500,
-                            ),
-                            textAlign: TextAlign.center,
                           ),
                         if (_musicTitle != null)
                           Padding(
@@ -406,7 +392,6 @@ class _CreateStatusScreenState extends State<CreateStatusScreen> {
                             ),
                           ),
                         if (_selectedEmoji == null &&
-                            _textController.text.isEmpty &&
                             _musicTitle == null)
                           Text(
                             'Your status will appear here',
@@ -418,24 +403,6 @@ class _CreateStatusScreenState extends State<CreateStatusScreen> {
                     ),
                   ),
                   const SizedBox(height: 24),
-
-                  // Text input
-                  TextField(
-                    controller: _textController,
-                    focusNode: _focusNode,
-                    maxLines: 3,
-                    maxLength: 140,
-                    textCapitalization: TextCapitalization.sentences,
-                    decoration: InputDecoration(
-                      hintText: "What's on your mind?",
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      contentPadding: const EdgeInsets.all(16),
-                    ),
-                    onChanged: (_) => setState(() {}),
-                  ),
-                  const SizedBox(height: 16),
 
                   // Full iOS emoji picker
                   Text(

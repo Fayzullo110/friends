@@ -1,5 +1,4 @@
 import 'dart:convert';
-import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
@@ -24,6 +23,10 @@ class ApiClient {
 
   Future<String?> _getToken() async {
     return await _storage.read(key: 'jwt_token');
+  }
+
+  Future<String?> getStoredToken() async {
+    return await _getToken();
   }
 
   Future<T> patchJson<T>(
@@ -106,6 +109,7 @@ class ApiClient {
     required String path,
     required Uint8List bytes,
     required String filename,
+    void Function(int sentBytes, int totalBytes)? onProgress,
   }) async {
     final uri = Uri.parse('$baseUrl$path');
     final token = await _getToken();
@@ -114,7 +118,38 @@ class ApiClient {
     if (token != null) {
       request.headers['Authorization'] = 'Bearer $token';
     }
-    request.files.add(http.MultipartFile.fromBytes('file', bytes, filename: filename));
+
+    final totalBytes = bytes.length;
+    if (onProgress != null) {
+      onProgress(0, totalBytes);
+    }
+
+    Stream<List<int>> streamBytesInChunks(Uint8List data) async* {
+      const chunkSize = 64 * 1024;
+      int offset = 0;
+      int sent = 0;
+      while (offset < data.length) {
+        final end = (offset + chunkSize < data.length)
+            ? offset + chunkSize
+            : data.length;
+        final chunk = data.sublist(offset, end);
+        offset = end;
+        sent += chunk.length;
+        if (onProgress != null) {
+          onProgress(sent, totalBytes);
+        }
+        yield chunk;
+      }
+    }
+
+    request.files.add(
+      http.MultipartFile(
+        'file',
+        http.ByteStream(streamBytesInChunks(bytes)),
+        totalBytes,
+        filename: filename,
+      ),
+    );
 
     _log('[API] UPLOAD $uri file: $filename (${bytes.length} bytes)');
     final streamed = await request.send();

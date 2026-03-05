@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:share_plus/share_plus.dart';
 
 import '../../models/post.dart';
 import '../../models/comment.dart';
@@ -6,6 +7,7 @@ import '../../services/auth_service.dart';
 import '../../services/comment_service.dart';
 import '../../services/post_service.dart';
 import '../../theme/ios_icons.dart';
+import '../../widgets/safe_network_image.dart';
 import '../chat/video_player_screen.dart';
 
 class PostViewerScreen extends StatefulWidget {
@@ -40,6 +42,17 @@ class _PostViewerScreenState extends State<PostViewerScreen> {
   Future<void> _share(Post post) async {
     try {
       await PostService.instance.incrementShareCount(postId: post.id);
+
+      final url = post.mediaUrl;
+      final text = (post.text).trim();
+      final payload = [
+        if (text.isNotEmpty) text,
+        if (url != null && url.trim().isNotEmpty) url,
+      ].join('\n');
+
+      if (payload.trim().isNotEmpty) {
+        await Share.share(payload, subject: 'Friends');
+      }
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Shared')),
@@ -141,20 +154,28 @@ class _PostViewerScreenState extends State<PostViewerScreen> {
                         radius: 18,
                         backgroundColor:
                             theme.colorScheme.primary.withOpacity(0.12),
-                        foregroundImage: (post.authorPhotoUrl != null &&
-                                post.authorPhotoUrl!.isNotEmpty)
-                            ? NetworkImage(post.authorPhotoUrl!)
-                            : null,
-                        child: Text(
-                          post.authorUsername.isNotEmpty
-                              ? post.authorUsername
-                                  .substring(0, 1)
-                                  .toUpperCase()
-                              : 'U',
-                          style: TextStyle(
-                            color: theme.colorScheme.primary,
-                            fontWeight: FontWeight.w700,
-                          ),
+                        child: ClipOval(
+                          child: (post.authorPhotoUrl != null &&
+                                  post.authorPhotoUrl!.trim().isNotEmpty)
+                              ? SafeNetworkImage(
+                                  url: post.authorPhotoUrl,
+                                  width: 36,
+                                  height: 36,
+                                  fit: BoxFit.cover,
+                                )
+                              : Center(
+                                  child: Text(
+                                    post.authorUsername.isNotEmpty
+                                        ? post.authorUsername
+                                            .substring(0, 1)
+                                            .toUpperCase()
+                                        : 'U',
+                                    style: TextStyle(
+                                      color: theme.colorScheme.primary,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                ),
                         ),
                       ),
                       const SizedBox(width: 10),
@@ -213,8 +234,8 @@ class _PostViewerScreenState extends State<PostViewerScreen> {
                                   );
                                 }
                               : null,
-                          child: Image.network(
-                            post.mediaUrl!,
+                          child: SafeNetworkImage(
+                            url: post.mediaUrl,
                             fit: BoxFit.cover,
                           ),
                         ),
@@ -379,20 +400,28 @@ class _PostCommentsSheetState extends State<_PostCommentsSheet> {
                                 radius: 16,
                                 backgroundColor:
                                     theme.colorScheme.primary.withOpacity(0.12),
-                                foregroundImage: (c.authorPhotoUrl != null &&
-                                        c.authorPhotoUrl!.isNotEmpty)
-                                    ? NetworkImage(c.authorPhotoUrl!)
-                                    : null,
-                                child: Text(
-                                  c.authorUsername.isNotEmpty
-                                      ? c.authorUsername
-                                          .substring(0, 1)
-                                          .toUpperCase()
-                                      : 'U',
-                                  style: TextStyle(
-                                    color: theme.colorScheme.primary,
-                                    fontWeight: FontWeight.w700,
-                                  ),
+                                child: ClipOval(
+                                  child: (c.authorPhotoUrl != null &&
+                                          c.authorPhotoUrl!.trim().isNotEmpty)
+                                      ? SafeNetworkImage(
+                                          url: c.authorPhotoUrl,
+                                          width: 32,
+                                          height: 32,
+                                          fit: BoxFit.cover,
+                                        )
+                                      : Center(
+                                          child: Text(
+                                            c.authorUsername.isNotEmpty
+                                                ? c.authorUsername
+                                                    .substring(0, 1)
+                                                    .toUpperCase()
+                                                : 'U',
+                                            style: TextStyle(
+                                              color: theme.colorScheme.primary,
+                                              fontWeight: FontWeight.w700,
+                                            ),
+                                          ),
+                                        ),
                                 ),
                               ),
                               const SizedBox(width: 10),
@@ -417,8 +446,8 @@ class _PostCommentsSheetState extends State<_PostCommentsSheet> {
                                     else if (c.type == CommentType.gif && c.mediaUrl != null && c.mediaUrl!.isNotEmpty)
                                       ClipRRect(
                                         borderRadius: BorderRadius.circular(12),
-                                        child: Image.network(
-                                          c.mediaUrl!,
+                                        child: SafeNetworkImage(
+                                          url: c.mediaUrl,
                                           height: 160,
                                           width: 160,
                                           fit: BoxFit.cover,

@@ -1,4 +1,3 @@
-import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
 import '../../theme/ios_icons.dart';
@@ -163,7 +162,7 @@ class _NotificationTile extends StatelessWidget {
             if (!context.mounted) return;
             Navigator.of(context).push(
               MaterialPageRoute(
-                builder: (_) => const ReelsScreen(),
+                builder: (_) => ReelsScreen(initialReelId: id),
               ),
             );
             return;

@@ -8,14 +8,21 @@ class PostService {
 
   static final PostService instance = PostService._();
 
-  Stream<List<Post>> watchRecentPosts() {
+  Future<List<Post>> fetchPostsPage({int page = 0, int limit = 100}) async {
+    final safePage = page < 0 ? 0 : page;
+    final safeLimit = limit < 1 ? 1 : (limit > 200 ? 200 : limit);
+    final rows = await AuthService.instance.api
+        .getListOfMaps('/api/posts?page=$safePage&limit=$safeLimit');
+    return rows.map(Post.fromJson).toList();
+  }
+
+  Stream<List<Post>> watchRecentPosts({int page = 0, int limit = 100}) {
     final controller = StreamController<List<Post>>();
     List<Post>? last;
 
     Future<void> tick() async {
       try {
-        final rows = await AuthService.instance.api.getListOfMaps('/api/posts');
-        final next = rows.map(Post.fromJson).toList();
+        final next = await fetchPostsPage(page: page, limit: limit);
         if (last == null || !_postsEqual(last!, next)) {
           last = next;
           controller.add(next);
@@ -33,6 +40,88 @@ class PostService {
       controller.close();
     };
 
+    return controller.stream;
+  }
+
+  Future<List<Post>> fetchPostsByAuthorPage({
+    required String authorId,
+    int page = 0,
+    int limit = 100,
+  }) async {
+    final safePage = page < 0 ? 0 : page;
+    final safeLimit = limit < 1 ? 1 : (limit > 200 ? 200 : limit);
+    final id = int.parse(authorId);
+    final rows = await AuthService.instance.api.getListOfMaps(
+      '/api/posts/by-author?authorId=$id&page=$safePage&limit=$safeLimit',
+    );
+    return rows.map(Post.fromJson).toList();
+  }
+
+  Stream<List<Post>> watchPostsByAuthor({
+    required String authorId,
+    int page = 0,
+    int limit = 100,
+  }) {
+    final controller = StreamController<List<Post>>();
+    List<Post>? last;
+
+    Future<void> tick() async {
+      try {
+        final next = await fetchPostsByAuthorPage(
+          authorId: authorId,
+          page: page,
+          limit: limit,
+        );
+        if (last == null || !_postsEqual(last!, next)) {
+          last = next;
+          controller.add(next);
+        }
+      } catch (_) {
+        // swallow
+      }
+    }
+
+    tick();
+    final timer = Timer.periodic(const Duration(seconds: 8), (_) => tick());
+    controller.onCancel = () {
+      timer.cancel();
+      controller.close();
+    };
+    return controller.stream;
+  }
+
+  Future<int> fetchPostCountByAuthor({required String authorId}) async {
+    final id = int.parse(authorId);
+    final res = await AuthService.instance.api.getJson(
+      '/api/posts/count?authorId=$id',
+      (json) => json,
+    );
+    final raw = (res['count'] as num?) ?? 0;
+    return raw.toInt();
+  }
+
+  Stream<int> watchPostCountByAuthor({required String authorId}) {
+    final controller = StreamController<int>();
+    int? last;
+
+    Future<void> tick() async {
+      try {
+        final next = await fetchPostCountByAuthor(authorId: authorId);
+        if (last == null || last != next) {
+          last = next;
+          controller.add(next);
+        }
+      } catch (_) {
+        // swallow
+      }
+    }
+
+    tick();
+    final timer = Timer.periodic(const Duration(seconds: 10), (_) => tick());
+    controller.onCancel = () {
+      timer.cancel();
+      controller.close();
+    };
     return controller.stream;
   }
 

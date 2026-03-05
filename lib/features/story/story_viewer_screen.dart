@@ -3,7 +3,6 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../../models/app_user.dart';
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:just_audio/just_audio.dart';
 
 import '../../models/story.dart';
@@ -13,6 +12,7 @@ import '../../services/chat_service.dart';
 import '../../services/story_service.dart';
 import '../../services/auth_service.dart';
 import '../../theme/ios_icons.dart';
+import '../../widgets/safe_network_image.dart';
 import '../chat/video_player_screen.dart';
 
 class StoryViewerScreen extends StatefulWidget {
@@ -513,10 +513,10 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
         return Stack(
           fit: StackFit.expand,
           children: [
-            CachedNetworkImage(
-              imageUrl: story.mediaUrl!,
+            SafeNetworkImage(
+              url: story.mediaUrl,
               fit: BoxFit.cover,
-              placeholder: (context, url) => const Center(
+              placeholder: const Center(
                 child: SizedBox(
                   width: 28,
                   height: 28,
@@ -526,7 +526,7 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
                   ),
                 ),
               ),
-              errorWidget: (context, url, error) => const Center(
+              error: const Center(
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
@@ -771,17 +771,25 @@ class _StoryLikesSheetState extends State<_StoryLikesSheet> {
                       final u = users[index];
                       return ListTile(
                         leading: CircleAvatar(
-                          backgroundImage:
-                              (u.photoUrl != null && u.photoUrl!.isNotEmpty)
-                                  ? NetworkImage(u.photoUrl!)
-                                  : null,
-                          child: (u.photoUrl == null || u.photoUrl!.isEmpty)
-                              ? Text(
-                                  u.username.isNotEmpty
-                                      ? u.username[0].toUpperCase()
-                                      : 'U',
-                                )
-                              : null,
+                          backgroundColor:
+                              Theme.of(context).colorScheme.surfaceVariant,
+                          child: ClipOval(
+                            child: (u.photoUrl != null &&
+                                    u.photoUrl!.trim().isNotEmpty)
+                                ? SafeNetworkImage(
+                                    url: u.photoUrl,
+                                    width: 40,
+                                    height: 40,
+                                    fit: BoxFit.cover,
+                                  )
+                                : Center(
+                                    child: Text(
+                                      u.username.isNotEmpty
+                                          ? u.username[0].toUpperCase()
+                                          : 'U',
+                                    ),
+                                  ),
+                          ),
                         ),
                         title: Text(u.username),
                       );

@@ -7,6 +7,7 @@ import '../../models/user_status.dart';
 import '../../services/user_status_service.dart';
 import '../../services/auth_service.dart';
 import '../../theme/ios_icons.dart';
+import '../../widgets/safe_network_image.dart';
 
 class StatusViewerScreen extends StatefulWidget {
   final List<UserStatus> statuses;
@@ -263,20 +264,26 @@ class _StatusViewerScreenState extends State<StatusViewerScreen>
         CircleAvatar(
           radius: 18,
           backgroundColor: Colors.white24,
-          backgroundImage: status.photoUrl != null
-              ? NetworkImage(status.photoUrl!)
-              : null,
-          child: status.photoUrl == null
-              ? Text(
-                  status.username.isNotEmpty
-                      ? status.username[0].toUpperCase()
-                      : '?',
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w600,
+          child: ClipOval(
+            child: (status.photoUrl != null && status.photoUrl!.trim().isNotEmpty)
+                ? SafeNetworkImage(
+                    url: status.photoUrl,
+                    width: 36,
+                    height: 36,
+                    fit: BoxFit.cover,
+                  )
+                : Center(
+                    child: Text(
+                      status.username.isNotEmpty
+                          ? status.username[0].toUpperCase()
+                          : '?',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
                   ),
-                )
-              : null,
+          ),
         ),
         const SizedBox(width: 12),
         Expanded(
@@ -343,7 +350,7 @@ class _StatusViewerScreenState extends State<StatusViewerScreen>
                   status.emoji!,
                   style: const TextStyle(fontSize: 80),
                 ),
-              if (status.text.isNotEmpty)
+              if (status.text.isNotEmpty && status.text.trim() != (status.emoji ?? '').trim())
                 Text(
                   status.text,
                   style: theme.textTheme.headlineSmall?.copyWith(

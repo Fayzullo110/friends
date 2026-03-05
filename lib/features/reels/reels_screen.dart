@@ -10,10 +10,11 @@ import '../../services/notification_service.dart';
 import '../../services/reel_service.dart';
 import '../../services/auth_service.dart';
 import '../../theme/ios_icons.dart';
+import '../../widgets/safe_network_image.dart';
 import '../chat/gif_picker_sheet.dart';
 import '../chat/video_player_screen.dart';
 
-class ReelsScreen extends StatelessWidget {
+class ReelsScreen extends StatefulWidget {
   final String? initialReelId;
 
   const ReelsScreen({
@@ -21,120 +22,202 @@ class ReelsScreen extends StatelessWidget {
     this.initialReelId,
   });
 
+  @override
+  State<ReelsScreen> createState() => _ReelsScreenState();
+}
+
+class _ReelsScreenState extends State<ReelsScreen> {
+  final PageController _pageController = PageController();
+
+  static const int _pageSize = 20;
+  int _page = 0;
+  bool _isInitialLoading = true;
+  bool _isLoadingMore = false;
+  bool _hasMore = true;
+
+  final List<Reel> _reels = <Reel>[];
+  final Set<String> _seenReelIds = <String>{};
+
+  Set<String>? _blockedByMe;
+  final Map<String, bool> _blockedMeCache = <String, bool>{};
+
+  @override
+  void initState() {
+    super.initState();
+    _pageController.addListener(_maybeLoadMore);
+    _loadInitial();
+  }
+
+  @override
+  void dispose() {
+    _pageController.removeListener(_maybeLoadMore);
+    _pageController.dispose();
+    super.dispose();
+  }
+
+  void _maybeLoadMore() {
+    if (!_hasMore || _isLoadingMore || _isInitialLoading) return;
+    final current = _pageController.page;
+    if (current == null) return;
+    final idx = current.round();
+    if (idx >= (_reels.length - 3)) {
+      _loadMore();
+    }
+  }
+
   int _initialIndexFor(List<Reel> reels) {
-    final id = initialReelId;
+    final id = widget.initialReelId;
     if (id == null || id.isEmpty) return 0;
     final idx = reels.indexWhere((r) => r.id == id);
     return idx >= 0 ? idx : 0;
   }
 
-  Future<List<Reel>> _filterReelsForBlocks({
-    required List<Reel> reels,
-    required String currentUserId,
-  }) async {
-    if (reels.isEmpty) return const <Reel>[];
+  Future<void> _ensureBlockLists() async {
+    final me = AuthService.instance.currentUser;
+    if (me == null) return;
+    if (_blockedByMe != null) return;
+    final list = await BlockService.instance.getBlockedOnce(uid: me.id);
+    _blockedByMe = list.toSet();
+  }
 
-    // Users I have blocked.
-    final blockedByMe =
-        await BlockService.instance.getBlockedOnce(uid: currentUserId);
+  Future<void> _loadInitial() async {
+    setState(() {
+      _isInitialLoading = true;
+      _page = 0;
+      _hasMore = true;
+      _reels.clear();
+      _seenReelIds.clear();
+    });
 
-    final result = <Reel>[];
+    await _ensureBlockLists();
+    await _loadMore();
 
-    for (final reel in reels) {
-      final authorId = reel.authorId;
+    if (!mounted) return;
+    setState(() {
+      _isInitialLoading = false;
+    });
 
-      // Skip my own blocking list first.
-      if (blockedByMe.contains(authorId)) {
-        continue;
+    final idx = _initialIndexFor(_reels);
+    if (idx > 0) {
+      _pageController.jumpToPage(idx);
+    }
+  }
+
+  Future<void> _loadMore() async {
+    if (!_hasMore || _isLoadingMore) return;
+
+    setState(() {
+      _isLoadingMore = true;
+    });
+
+    try {
+      final nextPage = await ReelService.instance.fetchReelsPage(
+        page: _page,
+        limit: _pageSize,
+      );
+
+      if (!mounted) return;
+
+      final me = AuthService.instance.currentUser;
+
+      if (me != null) {
+        final blockedByMe = _blockedByMe;
+        final Set<String> candidates = nextPage
+            .where((r) => !_seenReelIds.contains(r.id))
+            .map((r) => r.authorId)
+            .where((id) {
+          if (blockedByMe != null && blockedByMe.contains(id)) return false;
+          return !_blockedMeCache.containsKey(id);
+        }).toSet();
+
+        if (candidates.isNotEmpty) {
+          final futures = candidates.map((authorId) async {
+            final blockedMe = await BlockService.instance.isBlocked(
+              fromUserId: authorId,
+              toUserId: me.id,
+            );
+            return MapEntry(authorId, blockedMe);
+          }).toList();
+
+          final results = await Future.wait(futures);
+          for (final e in results) {
+            _blockedMeCache[e.key] = e.value;
+          }
+        }
       }
 
-      // Skip if the author has blocked me.
-      final blockedMe = await BlockService.instance.isBlocked(
-        fromUserId: authorId,
-        toUserId: currentUserId,
-      );
-      if (blockedMe) continue;
+      final List<Reel> accepted = <Reel>[];
+      for (final r in nextPage) {
+        if (_seenReelIds.contains(r.id)) continue;
 
-      result.add(reel);
+        if (me != null) {
+          final blockedByMe = _blockedByMe;
+          if (blockedByMe != null && blockedByMe.contains(r.authorId)) {
+            continue;
+          }
+
+          final blockedMe = _blockedMeCache[r.authorId] ?? false;
+          if (blockedMe) continue;
+        }
+
+        _seenReelIds.add(r.id);
+        accepted.add(r);
+      }
+
+      setState(() {
+        _reels.addAll(accepted);
+        _page += 1;
+        if (nextPage.length < _pageSize) {
+          _hasMore = false;
+        }
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _hasMore = false;
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoadingMore = false;
+        });
+      }
     }
-
-    return result;
   }
 
   @override
   Widget build(BuildContext context) {
+    if (_isInitialLoading && _reels.isEmpty) {
+      return const Scaffold(
+        backgroundColor: Colors.black,
+        body: Center(
+          child: SizedBox(
+            width: 24,
+            height: 24,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
+        ),
+      );
+    }
+
     return Scaffold(
       backgroundColor: Colors.black,
-      body: StreamBuilder<List<Reel>>(
-        stream: ReelService.instance.watchReels(),
-        builder: (context, snapshot) {
-          final allReels = snapshot.data ?? const <Reel>[];
-
-          final me = AuthService.instance.currentUser;
-          if (me == null) {
-            // Logged out: show everything.
-            if (allReels.isEmpty) {
-              return const Center(
-                child: Text(
-                  'No reels yet',
-                  style: TextStyle(color: Colors.white70),
-                ),
-              );
-            }
-
-            final initialIndex = _initialIndexFor(allReels);
-            return PageView.builder(
-              controller: PageController(initialPage: initialIndex),
+      body: _reels.isEmpty
+          ? const Center(
+              child: Text(
+                'No reels yet',
+                style: TextStyle(color: Colors.white70),
+              ),
+            )
+          : PageView.builder(
+              controller: _pageController,
               scrollDirection: Axis.vertical,
-              itemCount: allReels.length,
+              itemCount: _reels.length,
               itemBuilder: (context, index) {
-                final reel = allReels[index];
+                final reel = _reels[index];
                 return _ReelPage(reel: reel);
               },
-            );
-          }
-
-          return FutureBuilder<List<Reel>>(
-            future: _filterReelsForBlocks(
-              reels: allReels,
-              currentUserId: me.id,
             ),
-            builder: (context, filteredSnap) {
-              if (filteredSnap.connectionState == ConnectionState.waiting) {
-                return const Center(
-                  child: SizedBox(
-                    width: 24,
-                    height: 24,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  ),
-                );
-              }
-
-              final reels = filteredSnap.data ?? const <Reel>[];
-
-              if (reels.isEmpty) {
-                return const Center(
-                  child: Text(
-                    'No reels yet',
-                    style: TextStyle(color: Colors.white70),
-                  ),
-                );
-              }
-
-              final initialIndex = _initialIndexFor(reels);
-              return PageView.builder(
-                controller: PageController(initialPage: initialIndex),
-                scrollDirection: Axis.vertical,
-                itemCount: reels.length,
-                itemBuilder: (context, index) {
-                  final reel = reels[index];
-                  return _ReelPage(reel: reel);
-                },
-              );
-            },
-          );
-        },
-      ),
     );
   }
 }
@@ -154,6 +237,18 @@ class _ReelCommentsSheet extends StatefulWidget {
 
 class _ReelCommentsSheetState extends State<_ReelCommentsSheet> {
   final _controller = TextEditingController();
+
+  final Map<String, Future<AppUser>> _userFutureCache = <String, Future<AppUser>>{};
+
+  Future<AppUser> _userFuture(String userId) {
+    return _userFutureCache.putIfAbsent(
+      userId,
+      () => AuthService.instance.api.getJson(
+        '/api/users/$userId',
+        (json) => AppUser.fromJson(json),
+      ),
+    );
+  }
 
   @override
   void dispose() {
@@ -290,10 +385,7 @@ class _ReelCommentsSheetState extends State<_ReelCommentsSheet> {
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 FutureBuilder<AppUser>(
-                                  future: AuthService.instance.api.getJson(
-                                    '/api/users/${c.authorId}',
-                                    (json) => AppUser.fromJson(json),
-                                  ),
+                                  future: _userFuture(c.authorId),
                                   builder: (context, snap) {
                                     final photoUrl = snap.data?.photoUrl;
                                     return CircleAvatar(
@@ -301,25 +393,31 @@ class _ReelCommentsSheetState extends State<_ReelCommentsSheet> {
                                       backgroundColor: theme
                                           .colorScheme.primary
                                           .withOpacity(0.12),
-                                      backgroundImage: (photoUrl != null &&
-                                              photoUrl.isNotEmpty)
-                                          ? NetworkImage(photoUrl)
-                                          : null,
-                                      child: (photoUrl == null ||
-                                              photoUrl.isEmpty)
-                                          ? Text(
-                                              c.authorUsername.isNotEmpty
-                                                  ? c.authorUsername
-                                                      .substring(0, 1)
-                                                      .toUpperCase()
-                                                  : 'U',
-                                              style: TextStyle(
-                                                color: theme
-                                                    .colorScheme.primary,
-                                                fontWeight: FontWeight.w700,
+                                      child: ClipOval(
+                                        child: (photoUrl != null &&
+                                                photoUrl.trim().isNotEmpty)
+                                            ? SafeNetworkImage(
+                                                url: photoUrl,
+                                                width: 32,
+                                                height: 32,
+                                                fit: BoxFit.cover,
+                                              )
+                                            : Center(
+                                                child: Text(
+                                                  c.authorUsername.isNotEmpty
+                                                      ? c.authorUsername
+                                                          .substring(0, 1)
+                                                          .toUpperCase()
+                                                      : 'U',
+                                                  style: TextStyle(
+                                                    color: theme
+                                                        .colorScheme.primary,
+                                                    fontWeight:
+                                                        FontWeight.w700,
+                                                  ),
+                                                ),
                                               ),
-                                            )
-                                          : null,
+                                      ),
                                     );
                                   },
                                 ),
@@ -351,8 +449,8 @@ class _ReelCommentsSheetState extends State<_ReelCommentsSheet> {
                                         ClipRRect(
                                           borderRadius:
                                               BorderRadius.circular(12),
-                                          child: Image.network(
-                                            c.mediaUrl!,
+                                          child: SafeNetworkImage(
+                                            url: c.mediaUrl,
                                             height: 160,
                                             width: 160,
                                             fit: BoxFit.cover,
@@ -578,8 +676,8 @@ class _ReelPage extends StatelessWidget {
           if (reel.mediaType == 'image' &&
               reel.mediaUrl != null &&
               reel.mediaUrl!.isNotEmpty)
-            Image.network(
-              reel.mediaUrl!,
+            SafeNetworkImage(
+              url: reel.mediaUrl,
               fit: BoxFit.cover,
             )
           else

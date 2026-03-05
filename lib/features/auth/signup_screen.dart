@@ -44,6 +44,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
   }
 
   Future<void> _submit() async {
+    if (_isLoading) return;
     if (!_formKey.currentState!.validate()) return;
 
     FocusScope.of(context).unfocus();
@@ -140,6 +141,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
   }
 
   Future<void> _checkUsernameAvailability() async {
+    if (_checkingUsername || _isLoading) return;
     final value = _usernameController.text.trim();
     if (value.isEmpty) {
       setState(() {
@@ -154,17 +156,26 @@ class _SignUpScreenState extends State<SignUpScreen> {
       _usernameStatus = null;
     });
 
-    final available =
-        await AuthService.instance.isUsernameAvailable(value.trim());
-    if (!mounted) return;
+    try {
+      final available =
+          await AuthService.instance.isUsernameAvailable(value.trim());
+      if (!mounted) return;
 
-    setState(() {
-      _checkingUsername = false;
-      _usernameStatus = available
-          ? 'Great, this username is available.'
-          : 'This username is already taken.';
-      _usernameStatusColor = available ? Colors.green : Colors.red;
-    });
+      setState(() {
+        _checkingUsername = false;
+        _usernameStatus = available
+            ? 'Great, this username is available.'
+            : 'This username is already taken.';
+        _usernameStatusColor = available ? Colors.green : Colors.red;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _checkingUsername = false;
+        _usernameStatus = 'Failed to check username: $e';
+        _usernameStatusColor = Colors.red;
+      });
+    }
   }
 
   @override
@@ -287,12 +298,17 @@ class _SignUpScreenState extends State<SignUpScreen> {
                           children: [
                             TextFormField(
                               controller: _firstNameController,
+                              enabled: !_isLoading,
                               decoration: const InputDecoration(
                                 labelText: 'First name',
                                 border: OutlineInputBorder(),
                               ),
                               textCapitalization: TextCapitalization.words,
+                              textInputAction: TextInputAction.next,
                               onChanged: (_) => _updateUsernameSuggestions(),
+                              onFieldSubmitted: (_) {
+                                FocusScope.of(context).nextFocus();
+                              },
                               validator: (value) {
                                 if (value == null || value.trim().isEmpty) {
                                   return 'Please enter your first name';
@@ -303,16 +319,24 @@ class _SignUpScreenState extends State<SignUpScreen> {
                             const SizedBox(height: 16),
                             TextFormField(
                               controller: _lastNameController,
+                              enabled: !_isLoading,
                               decoration: const InputDecoration(
                                 labelText: 'Surname',
                                 border: OutlineInputBorder(),
                               ),
                               textCapitalization: TextCapitalization.words,
+                              textInputAction: TextInputAction.next,
                               onChanged: (_) => _updateUsernameSuggestions(),
+                              onFieldSubmitted: (_) {
+                                FocusScope.of(context).nextFocus();
+                              },
                             ),
                             const SizedBox(height: 16),
                             TextFormField(
                               controller: _usernameController,
+                              enabled: !_isLoading,
+                              autofillHints: const [AutofillHints.username],
+                              textInputAction: TextInputAction.next,
                               decoration: const InputDecoration(
                                 labelText: 'Username',
                                 border: OutlineInputBorder(),
@@ -321,6 +345,9 @@ class _SignUpScreenState extends State<SignUpScreen> {
                                 setState(() {
                                   _usernameStatus = null;
                                 });
+                              },
+                              onFieldSubmitted: (_) {
+                                FocusScope.of(context).nextFocus();
                               },
                               validator: (value) {
                                 if (value == null || value.isEmpty) {
@@ -388,7 +415,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
                             TextFormField(
                               controller: _ageController,
                               readOnly: true,
-                              onTap: _pickBirthDate,
+                              onTap: _isLoading ? null : _pickBirthDate,
                               decoration: const InputDecoration(
                                 labelText: 'Date of birth',
                                 hintText: 'Select your birth date',
@@ -422,11 +449,17 @@ class _SignUpScreenState extends State<SignUpScreen> {
                             const SizedBox(height: 16),
                             TextFormField(
                               controller: _emailController,
+                              enabled: !_isLoading,
+                              autofillHints: const [AutofillHints.email],
                               keyboardType: TextInputType.emailAddress,
+                              textInputAction: TextInputAction.next,
                               decoration: const InputDecoration(
                                 labelText: 'Email',
                                 border: OutlineInputBorder(),
                               ),
+                              onFieldSubmitted: (_) {
+                                FocusScope.of(context).nextFocus();
+                              },
                           validator: (value) {
                             if (value == null || value.isEmpty) {
                               return 'Please enter your email';
@@ -440,6 +473,9 @@ class _SignUpScreenState extends State<SignUpScreen> {
                             const SizedBox(height: 16),
                             TextFormField(
                               controller: _passwordController,
+                              enabled: !_isLoading,
+                              autofillHints: const [AutofillHints.newPassword],
+                              textInputAction: TextInputAction.next,
                               obscureText: _obscurePassword,
                               decoration: InputDecoration(
                                 labelText: 'Password',
@@ -450,13 +486,18 @@ class _SignUpScreenState extends State<SignUpScreen> {
                                         ? IOSIcons.eyeSlash
                                         : IOSIcons.eye,
                                   ),
-                                  onPressed: () {
+                                  onPressed: _isLoading
+                                      ? null
+                                      : () {
                                     setState(() {
                                       _obscurePassword = !_obscurePassword;
                                     });
                                   },
                                 ),
                               ),
+                              onFieldSubmitted: (_) {
+                                FocusScope.of(context).nextFocus();
+                              },
                           validator: (value) {
                             if (value == null || value.length < 6) {
                               return 'Password must be at least 6 characters';
@@ -467,6 +508,9 @@ class _SignUpScreenState extends State<SignUpScreen> {
                             const SizedBox(height: 16),
                             TextFormField(
                               controller: _confirmPasswordController,
+                              enabled: !_isLoading,
+                              autofillHints: const [AutofillHints.newPassword],
+                              textInputAction: TextInputAction.done,
                               obscureText: _obscureConfirmPassword,
                               decoration: InputDecoration(
                                 labelText: 'Confirm password',
@@ -477,7 +521,9 @@ class _SignUpScreenState extends State<SignUpScreen> {
                                         ? IOSIcons.eyeSlash
                                         : IOSIcons.eye,
                                   ),
-                                  onPressed: () {
+                                  onPressed: _isLoading
+                                      ? null
+                                      : () {
                                     setState(() {
                                       _obscureConfirmPassword =
                                           !_obscureConfirmPassword;
@@ -485,12 +531,16 @@ class _SignUpScreenState extends State<SignUpScreen> {
                                   },
                                 ),
                               ),
-                          validator: (value) {
-                            if (value != _passwordController.text) {
-                              return 'Passwords do not match';
-                            }
-                            return null;
-                          },
+                              onFieldSubmitted: (_) => _submit(),
+                              validator: (value) {
+                                if (value == null || value.isEmpty) {
+                                  return 'Please confirm your password';
+                                }
+                                if (value != _passwordController.text) {
+                                  return 'Passwords do not match';
+                                }
+                                return null;
+                              },
                             ),
                           ],
                         ),

@@ -3,12 +3,14 @@ package com.friends.backend.reel;
 import com.friends.backend.reel.dto.CreateReelRequest;
 import com.friends.backend.reel.dto.ReelResponse;
 import com.friends.backend.reel.dto.UpdateReelRequest;
+import com.friends.backend.common.PagedResponse;
 import com.friends.backend.security.UserPrincipal;
 import com.friends.backend.user.UserEntity;
 import com.friends.backend.user.UserRepository;
 import jakarta.validation.Valid;
 import java.time.Instant;
 import java.util.List;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
@@ -27,8 +29,32 @@ public class ReelController {
   }
 
   @GetMapping
-  public List<ReelResponse> recent() {
-    return reelRepository.findTop100ByArchivedAtIsNullAndDeletedAtIsNullOrderByCreatedAtDesc().stream().map(this::toResponse).toList();
+  public List<ReelResponse> recent(
+      @RequestParam(name = "page", defaultValue = "0") int page,
+      @RequestParam(name = "limit", defaultValue = "100") int limit) {
+    final int safePage = Math.max(0, page);
+    final int safeLimit = Math.min(200, Math.max(1, limit));
+    return reelRepository
+        .findByArchivedAtIsNullAndDeletedAtIsNullOrderByCreatedAtDesc(PageRequest.of(safePage, safeLimit))
+        .stream()
+        .map(this::toResponse)
+        .toList();
+  }
+
+  @GetMapping("/paged")
+  public PagedResponse<ReelResponse> recentPaged(
+      @RequestParam(name = "page", defaultValue = "0") int page,
+      @RequestParam(name = "limit", defaultValue = "100") int limit) {
+    final int safePage = Math.max(0, page);
+    final int safeLimit = Math.min(200, Math.max(1, limit));
+
+    final List<ReelEntity> rows = reelRepository
+        .findByArchivedAtIsNullAndDeletedAtIsNullOrderByCreatedAtDesc(PageRequest.of(safePage, safeLimit + 1));
+    final boolean hasMore = rows.size() > safeLimit;
+    final List<ReelEntity> pageRows = hasMore ? rows.subList(0, safeLimit) : rows;
+    final List<ReelResponse> items = pageRows.stream().map(this::toResponse).toList();
+
+    return new PagedResponse<>(items, hasMore, hasMore ? safePage + 1 : null, null);
   }
 
   @GetMapping("/{reelId}")

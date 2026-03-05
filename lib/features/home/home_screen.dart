@@ -1,9 +1,8 @@
-import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
-import 'package:cached_network_image/cached_network_image.dart';
 
 import '../../l10n/app_localizations.dart';
 import '../../theme/ios_icons.dart';
+import '../../widgets/safe_network_image.dart';
 import '../../models/comment.dart';
 import '../../models/post.dart';
 import '../../models/story.dart';
@@ -140,138 +139,268 @@ class HomeScreen extends StatelessWidget {
           ),
         ],
       ),
-      body: StreamBuilder<List<Post>>(
-        stream: PostService.instance.watchRecentPosts(),
-        builder: (context, snapshot) {
-          final rawPosts = snapshot.data ?? [];
-          final isLoading = snapshot.connectionState == ConnectionState.waiting;
+      body: const _PagedHomeFeed(),
+    );
+  }
+}
 
-          final me = AuthService.instance.currentUser;
+class _PagedHomeFeed extends StatefulWidget {
+  const _PagedHomeFeed();
 
-          Widget buildFeed(List<Post> posts) {
-            return Container(
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-                colors: [
-                  theme.colorScheme.surface,
-                  theme.colorScheme.surface.withOpacity(0.98),
-                  theme.colorScheme.surfaceVariant.withOpacity(0.96),
-                ],
-              ),
+  @override
+  State<_PagedHomeFeed> createState() => _PagedHomeFeedState();
+}
+
+class _PagedHomeFeedState extends State<_PagedHomeFeed> {
+  final ScrollController _scrollController = ScrollController();
+
+  static const int _pageSize = 20;
+  int _page = 0;
+  bool _isInitialLoading = true;
+  bool _isLoadingMore = false;
+  bool _hasMore = true;
+
+  final List<Post> _rawPosts = <Post>[];
+  final Set<String> _seenPostIds = <String>{};
+
+  Set<String>? _blockedByMe;
+  final Map<String, bool> _blockedMeCache = <String, bool>{};
+
+  @override
+  void initState() {
+    super.initState();
+    _scrollController.addListener(_maybeLoadMore);
+    _loadInitial();
+  }
+
+  @override
+  void dispose() {
+    _scrollController.removeListener(_maybeLoadMore);
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  void _maybeLoadMore() {
+    if (!_hasMore || _isLoadingMore || _isInitialLoading) return;
+    final pos = _scrollController.position;
+    if (!pos.hasPixels || !pos.hasContentDimensions) return;
+    if (pos.pixels >= (pos.maxScrollExtent - 600)) {
+      _loadMore();
+    }
+  }
+
+  Future<void> _loadInitial() async {
+    setState(() {
+      _isInitialLoading = true;
+      _page = 0;
+      _hasMore = true;
+      _rawPosts.clear();
+      _seenPostIds.clear();
+    });
+
+    await _ensureBlockLists();
+    await _loadMore();
+
+    if (!mounted) return;
+    setState(() {
+      _isInitialLoading = false;
+    });
+  }
+
+  Future<void> _ensureBlockLists() async {
+    final me = AuthService.instance.currentUser;
+    if (me == null) return;
+    if (_blockedByMe != null) return;
+    final list = await BlockService.instance.getBlockedOnce(uid: me.id);
+    _blockedByMe = list.toSet();
+  }
+
+  Future<void> _loadMore() async {
+    if (!_hasMore || _isLoadingMore) return;
+
+    setState(() {
+      _isLoadingMore = true;
+    });
+
+    try {
+      final nextPage = await PostService.instance.fetchPostsPage(
+        page: _page,
+        limit: _pageSize,
+      );
+
+      if (!mounted) return;
+
+      final me = AuthService.instance.currentUser;
+
+      if (me != null) {
+        final blockedByMe = _blockedByMe;
+        final Set<String> candidates = nextPage
+            .where((p) => !_seenPostIds.contains(p.id))
+            .map((p) => p.authorId)
+            .where((id) {
+          if (blockedByMe != null && blockedByMe.contains(id)) return false;
+          return !_blockedMeCache.containsKey(id);
+        }).toSet();
+
+        if (candidates.isNotEmpty) {
+          final futures = candidates.map((authorId) async {
+            final blockedMe = await BlockService.instance.isBlocked(
+              fromUserId: authorId,
+              toUserId: me.id,
+            );
+            return MapEntry(authorId, blockedMe);
+          }).toList();
+
+          final results = await Future.wait(futures);
+          for (final e in results) {
+            _blockedMeCache[e.key] = e.value;
+          }
+        }
+      }
+
+      final List<Post> accepted = <Post>[];
+      for (final p in nextPage) {
+        if (_seenPostIds.contains(p.id)) continue;
+
+        if (me != null) {
+          final blockedByMe = _blockedByMe;
+          if (blockedByMe != null && blockedByMe.contains(p.authorId)) {
+            continue;
+          }
+
+          final blockedMe = _blockedMeCache[p.authorId] ?? false;
+          if (blockedMe) continue;
+        }
+
+        _seenPostIds.add(p.id);
+        accepted.add(p);
+      }
+
+      setState(() {
+        _rawPosts.addAll(accepted);
+        _page += 1;
+        if (nextPage.length < _pageSize) {
+          _hasMore = false;
+        }
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _hasMore = false;
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoadingMore = false;
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Container(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [
+            theme.colorScheme.surface,
+            theme.colorScheme.surface.withOpacity(0.98),
+            theme.colorScheme.surfaceVariant.withOpacity(0.96),
+          ],
+        ),
+      ),
+      child: RefreshIndicator(
+        onRefresh: _loadInitial,
+        child: CustomScrollView(
+          controller: _scrollController,
+          slivers: [
+            const SliverToBoxAdapter(
+              child: _StoriesRow(),
             ),
-            child: CustomScrollView(
-              slivers: [
-                const SliverToBoxAdapter(
-                  child: _StoriesRow(),
-                ),
-              if (isLoading && posts.isEmpty)
-                const SliverToBoxAdapter(
-                  child: Padding(
-                    padding: EdgeInsets.all(24),
-                    child: Center(
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          SizedBox(
-                            width: 20,
-                            height: 20,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          ),
-                          SizedBox(height: 12),
-                          Text('Loading moments…'),
-                        ],
-                      ),
-                    ),
-                  ),
-                )
-                else if (posts.isEmpty)
-                  const SliverToBoxAdapter(
-                    child: Padding(
-                      padding: EdgeInsets.all(24),
-                      child: Center(
-                        child: Text(
-                          'No moments yet. Be the first to share a thought!',
+            if (_isInitialLoading && _rawPosts.isEmpty)
+              const SliverToBoxAdapter(
+                child: Padding(
+                  padding: EdgeInsets.all(24),
+                  child: Center(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(strokeWidth: 2),
                         ),
-                      ),
-                    ),
-                  )
-                else
-                  SliverList(
-                    delegate: SliverChildBuilderDelegate(
-                      (context, index) {
-                        final post = posts[index];
-                        final isTextOnly =
-                            post.mediaUrl == null || post.mediaUrl!.isEmpty;
-                        final item = _PostItemData(
-                          id: post.id,
-                          authorId: post.authorId,
-                          username: post.authorUsername,
-                          authorPhotoUrl: post.authorPhotoUrl,
-                          timeAgo: _formatTimeAgo(post.createdAt),
-                          isTextOnly: isTextOnly,
-                          text: post.text,
-                          imageUrl: isTextOnly ? null : post.mediaUrl,
-                          likeCount: post.likeCount,
-                          likedBy: post.likedBy,
-                          commentCount: post.commentCount,
-                          shareCount: post.shareCount,
-                          isVideo: post.mediaType == 'video',
-                        );
-                        return _PostCard(post: item);
-                      },
-                      childCount: posts.length,
+                        SizedBox(height: 12),
+                        Text('Loading moments…'),
+                      ],
                     ),
                   ),
-              ],
-            ),
-          );
-          }
+                ),
+              )
+            else if (_rawPosts.isEmpty)
+              const SliverToBoxAdapter(
+                child: Padding(
+                  padding: EdgeInsets.all(24),
+                  child: Center(
+                    child: Text(
+                      'No moments yet. Be the first to share a thought!',
+                    ),
+                  ),
+                ),
+              )
+            else
+              SliverList(
+                delegate: SliverChildBuilderDelegate(
+                  (context, index) {
+                    if (index >= _rawPosts.length) {
+                      return Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 18,
+                        ),
+                        child: Center(
+                          child: _hasMore
+                              ? const SizedBox(
+                                  width: 20,
+                                  height: 20,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
+                                )
+                              : const SizedBox.shrink(),
+                        ),
+                      );
+                    }
 
-          // If not logged in, show all posts.
-          if (me == null) {
-            return buildFeed(rawPosts);
-          }
-
-          // If logged in, hide posts from users I blocked AND users who have
-          // blocked me (best-effort using Firestore reads per author).
-          return FutureBuilder<List<Post>>(
-            future: () async {
-              final myBlockedIds = await BlockService.instance
-                  .getBlockedOnce(uid: me.id);
-
-              // First filter out authors I have blocked.
-              final byOthers = rawPosts
-                  .where((p) => !myBlockedIds.contains(p.authorId))
-                  .toList();
-
-              // Then check which authors have blocked me.
-              final authorIds = byOthers.map((p) => p.authorId).toSet().toList();
-              final futures = authorIds.map((authorId) async {
-                final blockedMe = await BlockService.instance.isBlocked(
-                  fromUserId: authorId,
-                  toUserId: me.id,
-                );
-                return MapEntry(authorId, blockedMe);
-              }).toList();
-
-              final results = await Future.wait(futures);
-              final blockedMeAuthors = results
-                  .where((e) => e.value)
-                  .map((e) => e.key)
-                  .toSet();
-
-              return byOthers
-                  .where((p) => !blockedMeAuthors.contains(p.authorId))
-                  .toList();
-            }(),
-            builder: (context, filteredSnap) {
-              final filteredPosts = filteredSnap.data ?? rawPosts;
-              return buildFeed(filteredPosts);
-            },
-          );
-        },
+                    final post = _rawPosts[index];
+                    final isTextOnly =
+                        post.mediaUrl == null || post.mediaUrl!.isEmpty;
+                    final item = _PostItemData(
+                      id: post.id,
+                      authorId: post.authorId,
+                      username: post.authorUsername,
+                      authorPhotoUrl: post.authorPhotoUrl,
+                      timeAgo: _formatTimeAgo(post.createdAt),
+                      isTextOnly: isTextOnly,
+                      text: post.text,
+                      imageUrl: isTextOnly ? null : post.mediaUrl,
+                      likeCount: post.likeCount,
+                      likedBy: post.likedBy,
+                      commentCount: post.commentCount,
+                      shareCount: post.shareCount,
+                      isVideo: post.mediaType == 'video',
+                    );
+                    return _PostCard(post: item);
+                  },
+                  childCount: _rawPosts.length + 1,
+                ),
+              ),
+          ],
+        ),
       ),
     );
   }
@@ -465,20 +594,28 @@ class _CommentsSheetState extends State<_CommentsSheet> {
                                   radius: 16,
                                   backgroundColor:
                                       theme.colorScheme.primary.withOpacity(0.12),
-                                  foregroundImage: (c.authorPhotoUrl != null &&
-                                          c.authorPhotoUrl!.isNotEmpty)
-                                      ? NetworkImage(c.authorPhotoUrl!)
-                                      : null,
-                                  child: Text(
-                                    c.authorUsername.isNotEmpty
-                                        ? c.authorUsername
-                                            .substring(0, 1)
-                                            .toUpperCase()
-                                        : 'U',
-                                    style: TextStyle(
-                                      color: theme.colorScheme.primary,
-                                      fontWeight: FontWeight.w700,
-                                    ),
+                                  child: ClipOval(
+                                    child: (c.authorPhotoUrl != null &&
+                                            c.authorPhotoUrl!.trim().isNotEmpty)
+                                        ? SafeNetworkImage(
+                                            url: c.authorPhotoUrl,
+                                            width: 32,
+                                            height: 32,
+                                            fit: BoxFit.cover,
+                                          )
+                                        : Center(
+                                            child: Text(
+                                              c.authorUsername.isNotEmpty
+                                                  ? c.authorUsername
+                                                      .substring(0, 1)
+                                                      .toUpperCase()
+                                                  : 'U',
+                                              style: TextStyle(
+                                                color: theme.colorScheme.primary,
+                                                fontWeight: FontWeight.w700,
+                                              ),
+                                            ),
+                                          ),
                                   ),
                                 ),
                                 const SizedBox(width: 10),
@@ -508,8 +645,8 @@ class _CommentsSheetState extends State<_CommentsSheet> {
                                         c.mediaUrl!.isNotEmpty)
                                       ClipRRect(
                                         borderRadius: BorderRadius.circular(12),
-                                        child: CachedNetworkImage(
-                                          imageUrl: c.mediaUrl!,
+                                        child: SafeNetworkImage(
+                                          url: c.mediaUrl,
                                           height: 160,
                                           width: 160,
                                           fit: BoxFit.cover,
@@ -758,8 +895,50 @@ String _formatTimeAgo(DateTime dateTime) {
   return '${diff.inDays}d';
 }
 
-class _StoriesRow extends StatelessWidget {
+class _StoriesRow extends StatefulWidget {
   const _StoriesRow();
+
+  @override
+  State<_StoriesRow> createState() => _StoriesRowState();
+}
+
+class _StoriesRowState extends State<_StoriesRow> {
+  int? _filteredStoriesSignature;
+  Future<Map<String, List<Story>>>? _filteredStoriesFuture;
+
+  Future<Map<String, List<Story>>> _computeFilteredStories({
+    required AppUser me,
+    required List<Story> allStories,
+  }) async {
+    final myBlockedIds =
+        await BlockService.instance.getBlockedOnce(uid: me.id);
+
+    // Authors for all stories except those I have blocked.
+    final stories =
+        allStories.where((s) => !myBlockedIds.contains(s.authorId)).toList();
+    final authorIds = stories.map((s) => s.authorId).toSet().toList();
+
+    final futures = authorIds.map((authorId) async {
+      final blockedMe = await BlockService.instance.isBlocked(
+        fromUserId: authorId,
+        toUserId: me.id,
+      );
+      return MapEntry(authorId, blockedMe);
+    }).toList();
+
+    final results = await Future.wait(futures);
+    final blockedMeAuthors =
+        results.where((e) => e.value).map((e) => e.key).toSet();
+
+    final visibleStories =
+        stories.where((s) => !blockedMeAuthors.contains(s.authorId)).toList();
+
+    final Map<String, List<Story>> byUser = {};
+    for (final s in visibleStories) {
+      byUser.putIfAbsent(s.authorId, () => []).add(s);
+    }
+    return byUser;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -885,42 +1064,23 @@ class _StoriesRow extends StatelessWidget {
 
               // Logged in: hide stories from users I blocked AND users who
               // have blocked me, and compute seen state using my uid.
+              final signature = Object.hash(
+                me.id,
+                allStories.length,
+                allStories.isEmpty ? '' : allStories.first.id,
+                allStories.isEmpty ? '' : allStories.last.id,
+              );
+              if (_filteredStoriesSignature != signature ||
+                  _filteredStoriesFuture == null) {
+                _filteredStoriesSignature = signature;
+                _filteredStoriesFuture = _computeFilteredStories(
+                  me: me,
+                  allStories: allStories,
+                );
+              }
+
               return FutureBuilder<Map<String, List<Story>>>(
-                future: () async {
-                  final myBlockedIds = await BlockService.instance
-                      .getBlockedOnce(uid: me.id);
-
-                  // Authors for all stories except those I have blocked.
-                  final stories = allStories
-                      .where((s) => !myBlockedIds.contains(s.authorId))
-                      .toList();
-                  final authorIds =
-                      stories.map((s) => s.authorId).toSet().toList();
-
-                  final futures = authorIds.map((authorId) async {
-                    final blockedMe = await BlockService.instance.isBlocked(
-                      fromUserId: authorId,
-                      toUserId: me.id,
-                    );
-                    return MapEntry(authorId, blockedMe);
-                  }).toList();
-
-                  final results = await Future.wait(futures);
-                  final blockedMeAuthors = results
-                      .where((e) => e.value)
-                      .map((e) => e.key)
-                      .toSet();
-
-                  final visibleStories = stories
-                      .where((s) => !blockedMeAuthors.contains(s.authorId))
-                      .toList();
-
-                  final Map<String, List<Story>> byUser = {};
-                  for (final s in visibleStories) {
-                    byUser.putIfAbsent(s.authorId, () => []).add(s);
-                  }
-                  return byUser;
-                }(),
+                future: _filteredStoriesFuture,
                 builder: (context, filteredSnap) {
                   final byUser = filteredSnap.data ?? <String, List<Story>>{};
                   final userIds = byUser.keys
@@ -1131,17 +1291,24 @@ class _StoryAvatar extends StatelessWidget {
               child: CircleAvatar(
                 radius: 22,
                 backgroundColor: theme.colorScheme.surfaceVariant,
-                backgroundImage:
-                    photoUrl != null ? NetworkImage(photoUrl!) : null,
-                child: photoUrl == null
-                    ? Icon(
-                        isCurrentUser
-                            ? Icons.add_circle_outline
-                            : Icons.person,
-                        color:
-                            theme.colorScheme.onSurface.withOpacity(0.8),
-                      )
-                    : null,
+                child: ClipOval(
+                  child: (photoUrl != null && photoUrl!.trim().isNotEmpty)
+                      ? SafeNetworkImage(
+                          url: photoUrl,
+                          width: 44,
+                          height: 44,
+                          fit: BoxFit.cover,
+                        )
+                      : Center(
+                          child: Icon(
+                            isCurrentUser
+                                ? Icons.add_circle_outline
+                                : Icons.person,
+                            color:
+                                theme.colorScheme.onSurface.withOpacity(0.8),
+                          ),
+                        ),
+                ),
               ),
             ),
           ),
@@ -1328,18 +1495,28 @@ class _PostCard extends StatelessWidget {
                       radius: 18,
                       backgroundColor:
                           theme.colorScheme.primary.withOpacity(0.12),
-                      foregroundImage: (post.authorPhotoUrl != null &&
-                              post.authorPhotoUrl!.isNotEmpty)
-                          ? NetworkImage(post.authorPhotoUrl!)
-                          : null,
-                      child: Text(
-                        post.username.isNotEmpty
-                            ? post.username.substring(0, 1).toUpperCase()
-                            : 'U',
-                        style: TextStyle(
-                          color: theme.colorScheme.primary,
-                          fontWeight: FontWeight.w700,
-                        ),
+                      child: ClipOval(
+                        child: (post.authorPhotoUrl != null &&
+                                post.authorPhotoUrl!.trim().isNotEmpty)
+                            ? SafeNetworkImage(
+                                url: post.authorPhotoUrl,
+                                width: 36,
+                                height: 36,
+                                fit: BoxFit.cover,
+                              )
+                            : Center(
+                                child: Text(
+                                  post.username.isNotEmpty
+                                      ? post.username
+                                          .substring(0, 1)
+                                          .toUpperCase()
+                                      : 'U',
+                                  style: TextStyle(
+                                    color: theme.colorScheme.primary,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                              ),
                       ),
                     ),
                     const SizedBox(width: 10),
@@ -1442,8 +1619,8 @@ class _PostCard extends StatelessWidget {
                     child: Stack(
                       fit: StackFit.expand,
                       children: [
-                        CachedNetworkImage(
-                          imageUrl: post.imageUrl!,
+                        SafeNetworkImage(
+                          url: post.imageUrl,
                           fit: BoxFit.cover,
                         ),
                         if (post.isVideo)

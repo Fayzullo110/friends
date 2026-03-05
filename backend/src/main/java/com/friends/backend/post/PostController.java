@@ -3,12 +3,15 @@ package com.friends.backend.post;
 import com.friends.backend.post.dto.CreatePostRequest;
 import com.friends.backend.post.dto.PostResponse;
 import com.friends.backend.post.dto.UpdatePostRequest;
+import com.friends.backend.common.PagedResponse;
 import com.friends.backend.security.UserPrincipal;
 import com.friends.backend.user.UserEntity;
 import com.friends.backend.user.UserRepository;
 import jakarta.validation.Valid;
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
@@ -27,9 +30,64 @@ public class PostController {
   }
 
   @GetMapping
-  public List<PostResponse> recent() {
-    final List<PostEntity> posts = postRepository.findTop100ByArchivedAtIsNullAndDeletedAtIsNullOrderByCreatedAtDesc();
+  public List<PostResponse> recent(
+      @RequestParam(name = "page", defaultValue = "0") int page,
+      @RequestParam(name = "limit", defaultValue = "100") int limit) {
+    final int safePage = Math.max(0, page);
+    final int safeLimit = Math.min(200, Math.max(1, limit));
+    final List<PostEntity> posts = postRepository.findByArchivedAtIsNullAndDeletedAtIsNullOrderByCreatedAtDesc(
+        PageRequest.of(safePage, safeLimit));
     return posts.stream().map(this::toResponse).toList();
+  }
+
+  @GetMapping("/paged")
+  public PagedResponse<PostResponse> recentPaged(
+      @RequestParam(name = "page", defaultValue = "0") int page,
+      @RequestParam(name = "limit", defaultValue = "100") int limit) {
+    final int safePage = Math.max(0, page);
+    final int safeLimit = Math.min(200, Math.max(1, limit));
+
+    // Fetch one extra item to determine hasMore.
+    final List<PostEntity> rows = postRepository.findByArchivedAtIsNullAndDeletedAtIsNullOrderByCreatedAtDesc(
+        PageRequest.of(safePage, safeLimit + 1));
+
+    final boolean hasMore = rows.size() > safeLimit;
+    final List<PostEntity> pageRows = hasMore ? rows.subList(0, safeLimit) : rows;
+    final List<PostResponse> items = pageRows.stream().map(this::toResponse).toList();
+
+    return new PagedResponse<>(items, hasMore, hasMore ? safePage + 1 : null, null);
+  }
+
+  @GetMapping("/by-author")
+  public List<PostResponse> byAuthor(
+      @RequestParam(name = "authorId") long authorId,
+      @RequestParam(name = "page", defaultValue = "0") int page,
+      @RequestParam(name = "limit", defaultValue = "100") int limit) {
+    final int safePage = Math.max(0, page);
+    final int safeLimit = Math.min(200, Math.max(1, limit));
+    final List<PostEntity> posts = postRepository
+        .findByAuthorIdAndArchivedAtIsNullAndDeletedAtIsNullOrderByCreatedAtDesc(authorId,
+            PageRequest.of(safePage, safeLimit));
+    return posts.stream().map(this::toResponse).toList();
+  }
+
+  @GetMapping("/by-author/paged")
+  public PagedResponse<PostResponse> byAuthorPaged(
+      @RequestParam(name = "authorId") long authorId,
+      @RequestParam(name = "page", defaultValue = "0") int page,
+      @RequestParam(name = "limit", defaultValue = "100") int limit) {
+    final int safePage = Math.max(0, page);
+    final int safeLimit = Math.min(200, Math.max(1, limit));
+
+    final List<PostEntity> rows = postRepository
+        .findByAuthorIdAndArchivedAtIsNullAndDeletedAtIsNullOrderByCreatedAtDesc(authorId,
+            PageRequest.of(safePage, safeLimit + 1));
+
+    final boolean hasMore = rows.size() > safeLimit;
+    final List<PostEntity> pageRows = hasMore ? rows.subList(0, safeLimit) : rows;
+    final List<PostResponse> items = pageRows.stream().map(this::toResponse).toList();
+
+    return new PagedResponse<>(items, hasMore, hasMore ? safePage + 1 : null, null);
   }
 
   @GetMapping("/{postId}")
@@ -48,6 +106,13 @@ public class PostController {
     final List<PostEntity> posts = postRepository
         .findTop200ByAuthorIdAndArchivedAtIsNotNullAndDeletedAtIsNullOrderByArchivedAtDesc(principal.getUserId());
     return posts.stream().map(this::toResponse).toList();
+  }
+
+  @GetMapping("/count")
+  public Map<String, Long> countByAuthor(
+      @RequestParam(name = "authorId") long authorId) {
+    final long count = postRepository.countByAuthorIdAndArchivedAtIsNullAndDeletedAtIsNull(authorId);
+    return Map.of("count", count);
   }
 
   @PostMapping

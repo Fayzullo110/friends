@@ -8,6 +8,7 @@ public class ChatMessageResponse {
   public long id;
   public long senderId;
   public String senderUsername;
+  public String senderPhotoUrl;
   public String type;
   public String text;
   public String mediaUrl;
@@ -19,6 +20,7 @@ public class ChatMessageResponse {
       long id,
       long senderId,
       String senderUsername,
+      String senderPhotoUrl,
       String type,
       String text,
       String mediaUrl,
@@ -28,6 +30,7 @@ public class ChatMessageResponse {
     this.id = id;
     this.senderId = senderId;
     this.senderUsername = senderUsername;
+    this.senderPhotoUrl = senderPhotoUrl;
     this.type = type;
     this.text = text;
     this.mediaUrl = mediaUrl;

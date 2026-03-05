@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import 'chat_detail_screen.dart';
@@ -5,6 +7,7 @@ import '../../models/app_user.dart';
 import '../../services/auth_service.dart';
 import '../../services/chat_service.dart';
 import '../../services/block_service.dart';
+import '../../widgets/safe_network_image.dart';
 
 class NewMessageScreen extends StatefulWidget {
   final bool startInGroupMode;
@@ -25,6 +28,12 @@ class _NewMessageScreenState extends State<NewMessageScreen> {
   final Set<String> _selectedUserIds = <String>{};
   late bool _isGroupMode;
 
+  Timer? _debounce;
+
+  String? _searchFutureForUserId;
+  String? _searchFutureForQuery;
+  Future<List<AppUser>>? _searchFuture;
+
   @override
   void initState() {
     super.initState();
@@ -33,6 +42,7 @@ class _NewMessageScreenState extends State<NewMessageScreen> {
 
   @override
   void dispose() {
+    _debounce?.cancel();
     _searchController.dispose();
     _groupTitleController.dispose();
     super.dispose();
@@ -76,8 +86,12 @@ class _NewMessageScreenState extends State<NewMessageScreen> {
             child: TextField(
               controller: _searchController,
               onChanged: (v) {
-                setState(() {
-                  _query = v;
+                _debounce?.cancel();
+                _debounce = Timer(const Duration(milliseconds: 300), () {
+                  if (!mounted) return;
+                  setState(() {
+                    _query = v;
+                  });
                 });
               },
               decoration: InputDecoration(
@@ -113,10 +127,20 @@ class _NewMessageScreenState extends State<NewMessageScreen> {
                 }
 
                 return FutureBuilder<List<AppUser>>(
-                  future: ChatService.instance.searchUsers(
-                    query: _query,
-                    excludeUid: me.id,
-                  ),
+                  future: () {
+                    final q = _query;
+                    if (_searchFutureForUserId != me.id ||
+                        _searchFutureForQuery != q ||
+                        _searchFuture == null) {
+                      _searchFutureForUserId = me.id;
+                      _searchFutureForQuery = q;
+                      _searchFuture = ChatService.instance.searchUsers(
+                        query: q,
+                        excludeUid: me.id,
+                      );
+                    }
+                    return _searchFuture;
+                  }(),
                   builder: (context, snapshot) {
                     final filtered = snapshot.data ?? [];
 
@@ -145,22 +169,27 @@ class _NewMessageScreenState extends State<NewMessageScreen> {
                               radius: 20,
                               backgroundColor: theme.colorScheme.primary
                                   .withOpacity(0.12),
-                              backgroundImage: (u.photoUrl != null &&
-                                      u.photoUrl!.isNotEmpty)
-                                  ? NetworkImage(u.photoUrl!)
-                                  : null,
-                              child: (u.photoUrl == null ||
-                                      u.photoUrl!.isEmpty)
-                                  ? Text(
-                                      u.username.isNotEmpty
-                                          ? u.username[0].toUpperCase()
-                                          : 'U',
-                                      style: TextStyle(
-                                        color: theme.colorScheme.primary,
-                                        fontWeight: FontWeight.w700,
+                              child: ClipOval(
+                                child: (u.photoUrl != null &&
+                                        u.photoUrl!.trim().isNotEmpty)
+                                    ? SafeNetworkImage(
+                                        url: u.photoUrl,
+                                        width: 40,
+                                        height: 40,
+                                        fit: BoxFit.cover,
+                                      )
+                                    : Center(
+                                        child: Text(
+                                          u.username.isNotEmpty
+                                              ? u.username[0].toUpperCase()
+                                              : 'U',
+                                          style: TextStyle(
+                                            color: theme.colorScheme.primary,
+                                            fontWeight: FontWeight.w700,
+                                          ),
+                                        ),
                                       ),
-                                    )
-                                  : null,
+                              ),
                             ),
                             title: Text(
                               u.username,
@@ -236,22 +265,28 @@ class _NewMessageScreenState extends State<NewMessageScreen> {
                                   backgroundColor: theme
                                       .colorScheme.primary
                                       .withOpacity(0.12),
-                                  backgroundImage: (u.photoUrl != null &&
-                                          u.photoUrl!.isNotEmpty)
-                                      ? NetworkImage(u.photoUrl!)
-                                      : null,
-                                  child: (u.photoUrl == null ||
-                                          u.photoUrl!.isEmpty)
-                                      ? Text(
-                                          u.username.isNotEmpty
-                                              ? u.username[0].toUpperCase()
-                                              : 'U',
-                                          style: TextStyle(
-                                            color: theme.colorScheme.primary,
-                                            fontWeight: FontWeight.w700,
+                                  child: ClipOval(
+                                    child: (u.photoUrl != null &&
+                                            u.photoUrl!.trim().isNotEmpty)
+                                        ? SafeNetworkImage(
+                                            url: u.photoUrl,
+                                            width: 40,
+                                            height: 40,
+                                            fit: BoxFit.cover,
+                                          )
+                                        : Center(
+                                            child: Text(
+                                              u.username.isNotEmpty
+                                                  ? u.username[0].toUpperCase()
+                                                  : 'U',
+                                              style: TextStyle(
+                                                color: theme
+                                                    .colorScheme.primary,
+                                                fontWeight: FontWeight.w700,
+                                              ),
+                                            ),
                                           ),
-                                        )
-                                      : null,
+                                  ),
                                 ),
                                 title: Text(
                                   u.username,

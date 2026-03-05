@@ -6,6 +6,7 @@ import com.friends.backend.chat.dto.CreateGroupChatRequest;
 import com.friends.backend.chat.dto.MarkSeenRequest;
 import com.friends.backend.chat.dto.SendMessageRequest;
 import com.friends.backend.chat.dto.TypingUpdateRequest;
+import com.friends.backend.common.PagedResponse;
 import com.friends.backend.security.UserPrincipal;
 import com.friends.backend.user.UserEntity;
 import com.friends.backend.user.UserRepository;
@@ -48,6 +49,13 @@ public class ChatController {
   public List<ChatResponse> myChats(Authentication authentication) {
     final UserPrincipal principal = (UserPrincipal) authentication.getPrincipal();
     return chatRepository.findMyChats(principal.getUserId()).stream().map(this::toChatResponse).toList();
+  }
+
+  @GetMapping("/unread-count")
+  public Map<String, Long> unreadCount(Authentication authentication) {
+    final UserPrincipal principal = (UserPrincipal) authentication.getPrincipal();
+    final long count = chatRepository.unreadChatCount(principal.getUserId());
+    return Map.of("count", count);
   }
 
   @PostMapping("/direct/{otherUserId}")
@@ -110,9 +118,34 @@ public class ChatController {
   }
 
   @GetMapping("/{chatId}/messages")
-  public List<ChatMessageResponse> messages(@PathVariable long chatId, Authentication authentication) {
+  public List<ChatMessageResponse> messages(
+      @PathVariable long chatId,
+      @RequestParam(name = "limit", defaultValue = "100") int limit,
+      @RequestParam(name = "offset", defaultValue = "0") int offset,
+      Authentication authentication) {
     requireMember(chatId, authentication);
-    return chatMessageRepository.findRecent(chatId).stream().map(this::toMessageResponse).toList();
+    final int safeLimit = Math.min(200, Math.max(1, limit));
+    final int safeOffset = Math.max(0, offset);
+    return chatMessageRepository.findRecent(chatId, safeLimit, safeOffset).stream().map(this::toMessageResponse).toList();
+  }
+
+  @GetMapping("/{chatId}/messages/paged")
+  public PagedResponse<ChatMessageResponse> messagesPaged(
+      @PathVariable long chatId,
+      @RequestParam(name = "limit", defaultValue = "100") int limit,
+      @RequestParam(name = "offset", defaultValue = "0") int offset,
+      Authentication authentication) {
+    requireMember(chatId, authentication);
+    final int safeLimit = Math.min(200, Math.max(1, limit));
+    final int safeOffset = Math.max(0, offset);
+
+    // Fetch one extra item to determine hasMore.
+    final List<ChatMessageEntity> rows = chatMessageRepository.findRecent(chatId, safeLimit + 1, safeOffset);
+    final boolean hasMore = rows.size() > safeLimit;
+    final List<ChatMessageEntity> pageRows = hasMore ? rows.subList(0, safeLimit) : rows;
+    final List<ChatMessageResponse> items = pageRows.stream().map(this::toMessageResponse).toList();
+
+    return new PagedResponse<>(items, hasMore, null, hasMore ? safeOffset + safeLimit : null);
   }
 
   @PostMapping("/{chatId}/messages")
@@ -244,14 +277,17 @@ public class ChatController {
     final List<Long> members = chatMemberRepository.findMemberIds(c.getId());
     final List<UserEntity> users = userRepository.findAllById(members);
     final Map<Long, String> memberUsernames = new HashMap<>();
+    final Map<Long, String> memberPhotoUrls = new HashMap<>();
     for (final UserEntity u : users) {
       memberUsernames.put(u.getId(), u.getUsername());
+      memberPhotoUrls.put(u.getId(), u.getPhotoUrl());
     }
 
     return new ChatResponse(
         c.getId(),
         members,
         memberUsernames,
+        memberPhotoUrls,
         c.getLastMessage(),
         c.getUpdatedAt(),
         c.isGroup(),
@@ -259,9 +295,9 @@ public class ChatController {
   }
 
   private ChatMessageResponse toMessageResponse(ChatMessageEntity m) {
-    final String senderUsername = userRepository.findById(m.getSenderId())
-        .map(UserEntity::getUsername)
-        .orElse("user");
+    final UserEntity sender = userRepository.findById(m.getSenderId()).orElse(null);
+    final String senderUsername = sender == null ? "user" : sender.getUsername();
+    final String senderPhotoUrl = sender == null ? null : sender.getPhotoUrl();
 
     final List<Long> seenBy = chatMessageSeenRepository.findUserIdsWhoSaw(m.getId());
 
@@ -277,6 +313,7 @@ public class ChatController {
         m.getId(),
         m.getSenderId(),
         senderUsername,
+        senderPhotoUrl,
         m.getType(),
         m.getText(),
         m.getMediaUrl(),

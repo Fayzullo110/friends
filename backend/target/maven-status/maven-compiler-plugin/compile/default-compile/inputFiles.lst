@@ -48,6 +48,7 @@
 /Users/fayzullotukhtasinov/CascadeProjects/windsurf-project/friends/backend/src/main/java/com/friends/backend/comment/dto/CreateCommentRequest.java
 /Users/fayzullotukhtasinov/CascadeProjects/windsurf-project/friends/backend/src/main/java/com/friends/backend/common/ApiError.java
 /Users/fayzullotukhtasinov/CascadeProjects/windsurf-project/friends/backend/src/main/java/com/friends/backend/common/GlobalExceptionHandler.java
+/Users/fayzullotukhtasinov/CascadeProjects/windsurf-project/friends/backend/src/main/java/com/friends/backend/common/PagedResponse.java
 /Users/fayzullotukhtasinov/CascadeProjects/windsurf-project/friends/backend/src/main/java/com/friends/backend/follow/FollowController.java
 /Users/fayzullotukhtasinov/CascadeProjects/windsurf-project/friends/backend/src/main/java/com/friends/backend/follow/UserFollowEntity.java
 /Users/fayzullotukhtasinov/CascadeProjects/windsurf-project/friends/backend/src/main/java/com/friends/backend/follow/UserFollowId.java
@@ -123,6 +124,7 @@
 /Users/fayzullotukhtasinov/CascadeProjects/windsurf-project/friends/backend/src/main/java/com/friends/backend/story/dto/CreateStoryRequest.java
 /Users/fayzullotukhtasinov/CascadeProjects/windsurf-project/friends/backend/src/main/java/com/friends/backend/story/dto/StoryResponse.java
 /Users/fayzullotukhtasinov/CascadeProjects/windsurf-project/friends/backend/src/main/java/com/friends/backend/upload/UploadController.java
+/Users/fayzullotukhtasinov/CascadeProjects/windsurf-project/friends/backend/src/main/java/com/friends/backend/upload/UploadStorage.java
 /Users/fayzullotukhtasinov/CascadeProjects/windsurf-project/friends/backend/src/main/java/com/friends/backend/upload/UploadsStaticController.java
 /Users/fayzullotukhtasinov/CascadeProjects/windsurf-project/friends/backend/src/main/java/com/friends/backend/user/UserController.java
 /Users/fayzullotukhtasinov/CascadeProjects/windsurf-project/friends/backend/src/main/java/com/friends/backend/user/UserEntity.java

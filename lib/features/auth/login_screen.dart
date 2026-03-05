@@ -28,6 +28,7 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   Future<void> _submit() async {
+    if (_isLoading) return;
     if (!_formKey.currentState!.validate()) return;
 
     FocusScope.of(context).unfocus();
@@ -177,11 +178,21 @@ class _LoginScreenState extends State<LoginScreen> {
                               children: [
                                 TextFormField(
                                   controller: _identifierController,
+                                  enabled: !_isLoading,
+                                  autofillHints: const [
+                                    AutofillHints.username,
+                                    AutofillHints.email,
+                                  ],
+                                  keyboardType: TextInputType.emailAddress,
+                                  textInputAction: TextInputAction.next,
                                   decoration: const InputDecoration(
                                     labelText: 'Email or username',
                                     prefixIcon: Icon(IOSIcons.mail),
                                     border: OutlineInputBorder(),
                                   ),
+                                  onFieldSubmitted: (_) {
+                                    FocusScope.of(context).nextFocus();
+                                  },
                                   validator: (value) {
                                     if (value == null ||
                                         value.trim().isEmpty) {
@@ -193,6 +204,9 @@ class _LoginScreenState extends State<LoginScreen> {
                                 const SizedBox(height: 16),
                                 TextFormField(
                                   controller: _passwordController,
+                                  enabled: !_isLoading,
+                                  autofillHints: const [AutofillHints.password],
+                                  textInputAction: TextInputAction.done,
                                   obscureText: _obscurePassword,
                                   decoration: InputDecoration(
                                     labelText: 'Password',
@@ -203,7 +217,9 @@ class _LoginScreenState extends State<LoginScreen> {
                                       icon: Icon(_obscurePassword
                                           ? IOSIcons.eyeSlash
                                           : IOSIcons.eye),
-                                      onPressed: () {
+                                      onPressed: _isLoading
+                                          ? null
+                                          : () {
                                         setState(() {
                                           _obscurePassword =
                                               !_obscurePassword;
@@ -211,6 +227,7 @@ class _LoginScreenState extends State<LoginScreen> {
                                       },
                                     ),
                                   ),
+                                  onFieldSubmitted: (_) => _submit(),
                                   validator: (value) {
                                     if (value == null || value.length < 6) {
                                       return 'Password must be at least 6 characters';

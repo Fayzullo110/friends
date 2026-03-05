@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
-import 'package:cached_network_image/cached_network_image.dart';
 
 import '../../services/giphy_service.dart';
+import '../../widgets/safe_network_image.dart';
 
 class GifPickerSheet extends StatefulWidget {
   final void Function(GiphyGif gif) onSelected;
@@ -149,8 +149,8 @@ class _GifPickerSheetState extends State<GifPickerSheet> {
                         },
                         child: ClipRRect(
                           borderRadius: BorderRadius.circular(8),
-                          child: CachedNetworkImage(
-                            imageUrl: gif.previewUrl,
+                          child: SafeNetworkImage(
+                            url: gif.previewUrl,
                             fit: BoxFit.cover,
                           ),
                         ),

@@ -7,6 +7,7 @@ import '../../models/app_user.dart';
 import '../../services/auth_service.dart';
 import '../../services/friend_service.dart';
 import '../../services/block_service.dart';
+import '../../widgets/safe_network_image.dart';
 import '../profile/user_profile_screen.dart';
 
 class UserSearchScreen extends StatefulWidget {
@@ -155,17 +156,22 @@ class _UserSearchScreenState extends State<UserSearchScreen> {
                 final u = _results[index];
                 return ListTile(
                   leading: CircleAvatar(
-                    backgroundImage: (u.photoUrl != null &&
-                            u.photoUrl!.isNotEmpty)
-                        ? NetworkImage(u.photoUrl!)
-                        : null,
-                    child: (u.photoUrl == null || u.photoUrl!.isEmpty)
-                        ? Text(
-                            u.username.isNotEmpty
-                                ? u.username[0].toUpperCase()
-                                : '?',
-                          )
-                        : null,
+                    child: ClipOval(
+                      child: (u.photoUrl != null && u.photoUrl!.trim().isNotEmpty)
+                          ? SafeNetworkImage(
+                              url: u.photoUrl,
+                              width: 40,
+                              height: 40,
+                              fit: BoxFit.cover,
+                            )
+                          : Center(
+                              child: Text(
+                                u.username.isNotEmpty
+                                    ? u.username[0].toUpperCase()
+                                    : '?',
+                              ),
+                            ),
+                    ),
                   ),
                   title: Text(u.username),
                   subtitle:

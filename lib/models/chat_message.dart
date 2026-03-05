@@ -4,6 +4,7 @@ class ChatMessage {
   final String id;
   final String senderId;
   final String senderUsername;
+  final String? senderPhotoUrl;
   final ChatMessageType type;
   final String? text;
   final String? mediaUrl;
@@ -15,6 +16,7 @@ class ChatMessage {
     required this.id,
     required this.senderId,
     required this.senderUsername,
+    this.senderPhotoUrl,
     required this.type,
     this.text,
     this.mediaUrl,
@@ -31,6 +33,7 @@ class ChatMessage {
       id: data['id'].toString(),
       senderId: data['senderId'].toString(),
       senderUsername: data['senderUsername'] as String? ?? '',
+      senderPhotoUrl: data['senderPhotoUrl'] as String?,
       type: _typeFromString(typeStr),
       text: data['text'] as String?,
       mediaUrl: data['mediaUrl'] as String?,
@@ -71,6 +74,7 @@ class ChatMessage {
       'id': id,
       'senderId': senderId,
       'senderUsername': senderUsername,
+      'senderPhotoUrl': senderPhotoUrl,
       'type': typeStr,
       'text': text,
       'mediaUrl': mediaUrl,

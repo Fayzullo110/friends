@@ -1,17 +1,22 @@
-import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
-import 'package:image_picker/image_picker.dart';
+import 'package:flutter/services.dart';
+import 'package:share_plus/share_plus.dart';
+import 'package:video_player/video_player.dart';
 
 import '../../models/app_user.dart';
 import '../../models/post.dart';
 import '../../models/reel.dart';
 import '../../services/auth_service.dart';
+import '../../services/block_service.dart';
+import '../../services/chat_service.dart';
 import '../../services/follow_service.dart';
 import '../../services/post_service.dart';
 import '../../services/reel_service.dart';
 import '../../theme/ios_icons.dart';
+import '../chat/chat_detail_screen.dart';
 import '../post/post_viewer_screen.dart';
 import '../reels/reels_screen.dart';
+import '../../widgets/safe_network_image.dart';
 import 'edit_profile_screen.dart';
 import 'settings_screen.dart';
 
@@ -26,7 +31,75 @@ class ProfileScreen extends StatefulWidget {
 
 class _ProfileScreenState extends State<ProfileScreen> {
   _ProfileTabType _selectedTab = _ProfileTabType.grid;
-  final ImagePicker _picker = ImagePicker();
+  bool _isStartingChat = false;
+
+  bool _isVideoUrl(String url) {
+    final u = url.trim().toLowerCase();
+    return u.endsWith('.mp4') ||
+        u.endsWith('.mov') ||
+        u.endsWith('.m4v') ||
+        u.endsWith('.webm');
+  }
+
+  String _profileLink(AppUser user) {
+    // Lightweight internal deep-link style string. Can be replaced with real web URL later.
+    return 'friends://profile/${user.id}';
+  }
+
+  Future<void> _copyProfileLink(AppUser user) async {
+    final link = _profileLink(user);
+    await Clipboard.setData(ClipboardData(text: link));
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Profile link copied')),
+    );
+  }
+
+  Future<void> _shareProfile(AppUser user) async {
+    final link = _profileLink(user);
+    showModalBottomSheet<void>(
+      context: context,
+      builder: (ctx) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                leading: const Icon(IOSIcons.shareUp),
+                title: const Text('Share'),
+                subtitle: Text(link),
+                onTap: () async {
+                  Navigator.of(ctx).pop();
+                  try {
+                    await Share.share(
+                      link,
+                      subject: 'Friends profile',
+                    );
+                  } catch (_) {
+                    await _copyProfileLink(user);
+                  }
+                },
+              ),
+              ListTile(
+                leading: const Icon(IOSIcons.share),
+                title: const Text('Copy link'),
+                subtitle: Text(link),
+                onTap: () async {
+                  Navigator.of(ctx).pop();
+                  await _copyProfileLink(user);
+                },
+              ),
+              ListTile(
+                leading: const Icon(IOSIcons.close),
+                title: const Text('Cancel'),
+                onTap: () => Navigator.of(ctx).pop(),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
 
   Future<AppUser?> _loadUser() async {
     if (widget.userId == null) {
@@ -43,45 +116,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
     return idsStream.asyncMap((ids) => _fetchUsersByIds(ids));
   }
 
-  Future<void> _pickBackgroundImage(AppUser user) async {
-    final XFile? pickedFile = await _picker.pickImage(
-      source: ImageSource.gallery,
-      maxWidth: 1200,
-      maxHeight: 600,
-      imageQuality: 85,
-    );
-
-    if (pickedFile == null) return;
-
-    try {
-      final bytes = await pickedFile.readAsBytes();
-      final res = await AuthService.instance.api.uploadFile(
-        path: '/api/uploads',
-        bytes: bytes,
-        filename: pickedFile.name,
-      );
-      final url = (res['url'] as String?) ?? '';
-      if (url.isEmpty) throw Exception('Upload failed');
-
-      await AuthService.instance.api.patchNoContent(
-        '/api/users/me',
-        body: {'backgroundImageUrl': url},
-      );
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Background photo updated!')),
-        );
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to upload: $e')),
-        );
-      }
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -90,8 +124,16 @@ class _ProfileScreenState extends State<ProfileScreen> {
       future: _loadUser(),
       builder: (context, snap) {
         if (snap.connectionState == ConnectionState.waiting) {
-          return const Scaffold(
-            body: Center(child: CircularProgressIndicator()),
+          return Scaffold(
+            body: Center(
+              child: SizedBox(
+                width: 24,
+                height: 24,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                ),
+              ),
+            ),
           );
         }
 
@@ -109,20 +151,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
         return Scaffold(
           body: Stack(
             children: [
-              // Background image with camera button
-              if (user.backgroundImageUrl != null && user.backgroundImageUrl!.isNotEmpty)
-                Positioned(
-                  top: 0,
-                  left: 0,
-                  right: 0,
-                  height: 200,
-                  child: Image.network(
-                    user.backgroundImageUrl!,
-                    fit: BoxFit.cover,
-                    width: double.infinity,
-                    height: 200,
-                  ),
-                ),
               // Background gradient (always visible behind)
               Positioned(
                 top: 0,
@@ -142,10 +170,24 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   ),
                 ),
               ),
+              // Background media
+              if (user.backgroundImageUrl != null &&
+                  user.backgroundImageUrl!.isNotEmpty)
+                Positioned(
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  height: 200,
+                  child: _ProfileBackgroundMedia(
+                    url: user.backgroundImageUrl!,
+                    height: 200,
+                    isVideo: _isVideoUrl(user.backgroundImageUrl!),
+                  ),
+                ),
               CustomScrollView(
                 slivers: [
                   SliverAppBar(
-                    expandedHeight: 520,
+                    expandedHeight: 500,
                     pinned: true,
                     backgroundColor: Colors.transparent,
                     surfaceTintColor: Colors.transparent,
@@ -153,240 +195,520 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     flexibleSpace: FlexibleSpaceBar(
                       collapseMode: CollapseMode.none,
                       background: Container(
-                        color: theme.scaffoldBackgroundColor,
+                        color: Colors.transparent,
                         child: Column(
                           children: [
-                            const SizedBox(height: 160),
-                            // Profile photo overlapping the cover
-                            Stack(
-                              alignment: Alignment.bottomRight,
-                              children: [
-                                Container(
-                                  decoration: BoxDecoration(
-                                    shape: BoxShape.circle,
-                                    border: Border.all(
-                                      color: theme.scaffoldBackgroundColor,
-                                      width: 4,
-                                    ),
-                                  ),
-                                  child: CircleAvatar(
-                                    radius: 54,
-                                    backgroundColor: theme.colorScheme.primaryContainer,
-                                    backgroundImage: user.photoUrl != null && user.photoUrl!.isNotEmpty
-                                        ? NetworkImage(user.photoUrl!)
-                                        : null,
-                                    child: user.photoUrl == null || user.photoUrl!.isEmpty
-                                        ? Text(
-                                            user.username.isNotEmpty
-                                                ? user.username[0].toUpperCase()
-                                                : 'U',
-                                            style: TextStyle(
-                                              color: theme.colorScheme.onPrimaryContainer,
-                                              fontWeight: FontWeight.w700,
-                                              fontSize: 36,
-                                            ),
-                                          )
-                                        : null,
-                                  ),
-                                ),
-                                // Avatar upload button (bottom right corner)
-                                if (isOwnProfile)
-                                  Positioned(
-                                    bottom: 0,
-                                    right: 0,
-                                    child: GestureDetector(
-                                      onTap: () => _pickAvatarImage(user),
-                                      child: Container(
-                                        width: 32,
-                                        height: 32,
-                                        decoration: BoxDecoration(
-                                          color: const Color(0xFF8D5CF6),
-                                          shape: BoxShape.circle,
-                                          border: Border.all(color: Colors.white, width: 2),
-                                          boxShadow: [
-                                            BoxShadow(
-                                              color: Colors.black.withOpacity(0.2),
-                                              blurRadius: 4,
-                                              offset: const Offset(0, 2),
-                                            ),
-                                          ],
-                                        ),
-                                        child: const Icon(
-                                          CupertinoIcons.camera,
-                                          color: Colors.white,
-                                          size: 16,
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                              ],
-                            ),
-                            const SizedBox(height: 12),
-                            // Name and handle
-                            Text(
-                              user.username,
-                              style: theme.textTheme.titleLarge?.copyWith(
-                                fontWeight: FontWeight.w700,
-                                color: theme.colorScheme.onSurface,
-                              ),
-                            ),
-                            const SizedBox(height: 2),
-                            Text(
-                              '@${user.username.toLowerCase().replaceAll(' ', '_')}',
-                              style: theme.textTheme.bodyMedium?.copyWith(
-                                color: theme.colorScheme.onSurface.withOpacity(0.6),
-                              ),
-                            ),
-                            const SizedBox(height: 16),
-                            // Stats row
+                            const SizedBox(height: 150),
                             Padding(
-                              padding: const EdgeInsets.symmetric(horizontal: 32),
-                              child: Row(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  // Posts count
-                                  StreamBuilder<List<Post>>(
-                                    stream: PostService.instance.watchRecentPosts(),
-                                    builder: (context, snapshot) {
-                                      final count = snapshot.data?.where((p) => p.authorId == user.id).length ?? 0;
-                                      return _ProfileStat(label: 'Post', value: count.toString());
-                                    },
-                                  ),
-                                  Container(
-                                    height: 24,
-                                    width: 1,
-                                    color: theme.dividerColor,
-                                    margin: const EdgeInsets.symmetric(horizontal: 24),
-                                  ),
-                                  _FollowersStat(
-                                    user: user,
-                                    onTap: () {
-                                      _showFollowListSheet(
-                                        context,
-                                        title: 'Followers',
-                                        usersStream: _usersStreamFromIds(
-                                          FollowService.instance.watchFollowers(uid: user.id),
-                                        ),
-                                      );
-                                    },
-                                  ),
-                                  Container(
-                                    height: 24,
-                                    width: 1,
-                                    color: theme.dividerColor,
-                                    margin: const EdgeInsets.symmetric(horizontal: 24),
-                                  ),
-                                  _FollowingStat(
-                                    user: user,
-                                    onTap: () {
-                                      _showFollowListSheet(
-                                        context,
-                                        title: 'Following',
-                                        usersStream: _usersStreamFromIds(
-                                          FollowService.instance.watchFollowing(uid: user.id),
-                                        ),
-                                      );
-                                    },
-                                  ),
-                                ],
-                              ),
-                            ),
-                            const SizedBox(height: 16),
-                            // Action buttons
-                            if (!isOwnProfile)
-                              Padding(
-                                padding: const EdgeInsets.symmetric(horizontal: 16),
-                                child: Row(
-                                  children: [
-                                    Expanded(
-                                      child: OutlinedButton(
-                                        onPressed: () {
-                                          // Navigate to chat
-                                        },
-                                        style: OutlinedButton.styleFrom(
-                                          padding: const EdgeInsets.symmetric(vertical: 12),
-                                          side: BorderSide(color: theme.colorScheme.outline),
-                                          shape: RoundedRectangleBorder(
-                                            borderRadius: BorderRadius.circular(24),
-                                          ),
-                                        ),
-                                        child: const Text('Message'),
-                                      ),
-                                    ),
-                                    const SizedBox(width: 12),
-                                    Expanded(
-                                      child: StreamBuilder<bool>(
-                                        stream: FollowService.instance.watchIsFollowing(
-                                          fromUserId: (me?.id ?? ''),
-                                          toUserId: user.id,
-                                        ),
-                                        builder: (context, snapshot) {
-                                          final isFollowing = snapshot.data ?? false;
-                                          return ElevatedButton(
-                                            onPressed: () async {
-                                              if (me == null) return;
-                                              try {
-                                                if (isFollowing) {
-                                                  await FollowService.instance.unfollow(
-                                                    fromUserId: me.id,
-                                                    toUserId: user.id,
-                                                  );
-                                                } else {
-                                                  await FollowService.instance.follow(
-                                                    fromUserId: me.id,
-                                                    toUserId: user.id,
-                                                  );
-                                                }
-                                              } catch (e) {
-                                                if (mounted) {
-                                                  ScaffoldMessenger.of(context).showSnackBar(
-                                                    SnackBar(content: Text('Error: $e')),
-                                                  );
-                                                }
-                                              }
-                                            },
-                                            style: ElevatedButton.styleFrom(
-                                              backgroundColor: const Color(0xFFD4943A),
-                                              foregroundColor: Colors.white,
-                                              padding: const EdgeInsets.symmetric(vertical: 12),
-                                              shape: RoundedRectangleBorder(
-                                                borderRadius: BorderRadius.circular(24),
-                                              ),
-                                            ),
-                                            child: Text(isFollowing ? 'Following' : 'Follow'),
-                                          );
-                                        },
-                                      ),
+                              padding: const EdgeInsets.symmetric(horizontal: 16),
+                              child: Container(
+                                decoration: BoxDecoration(
+                                  color: theme.colorScheme.surface,
+                                  borderRadius: BorderRadius.circular(28),
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: Colors.black.withOpacity(0.06),
+                                      blurRadius: 18,
+                                      offset: const Offset(0, 10),
                                     ),
                                   ],
                                 ),
-                              ),
-                            if (isOwnProfile)
-                              Padding(
-                                padding: const EdgeInsets.symmetric(horizontal: 16),
-                                child: SizedBox(
-                                  width: double.infinity,
-                                  child: OutlinedButton.icon(
-                                    onPressed: () {
-                                      Navigator.of(context).push(
-                                        MaterialPageRoute(
-                                          builder: (_) => EditProfileScreen(user: user),
-                                        ),
-                                      );
-                                    },
-                                    icon: const Icon(IOSIcons.editOutlined),
-                                    label: const Text('Edit Profile'),
-                                    style: OutlinedButton.styleFrom(
-                                      padding: const EdgeInsets.symmetric(vertical: 12),
-                                      side: BorderSide(color: theme.colorScheme.outline),
-                                      shape: RoundedRectangleBorder(
-                                        borderRadius: BorderRadius.circular(24),
+                                child: Padding(
+                                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 18),
+                                  child: Column(
+                                    children: [
+                                      Row(
+                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        children: [
+                                          Stack(
+                                            alignment: Alignment.bottomRight,
+                                            children: [
+                                              Container(
+                                                decoration: BoxDecoration(
+                                                  shape: BoxShape.circle,
+                                                  border: Border.all(
+                                                    color: theme.scaffoldBackgroundColor,
+                                                    width: 4,
+                                                  ),
+                                                ),
+                                                child: SizedBox(
+                                                  width: 92,
+                                                  height: 92,
+                                                  child: ClipOval(
+                                                    child: (user.photoUrl != null &&
+                                                            user.photoUrl!
+                                                                .trim()
+                                                                .isNotEmpty)
+                                                        ? SafeNetworkImage(
+                                                            url: user.photoUrl,
+                                                            width: 92,
+                                                            height: 92,
+                                                            fit: BoxFit.cover,
+                                                          )
+                                                        : Container(
+                                                            color: theme.colorScheme
+                                                                .primaryContainer,
+                                                            alignment:
+                                                                Alignment.center,
+                                                            child: Text(
+                                                              user.username
+                                                                      .isNotEmpty
+                                                                  ? user.username[0]
+                                                                      .toUpperCase()
+                                                                  : 'U',
+                                                              style: TextStyle(
+                                                                color: theme
+                                                                    .colorScheme
+                                                                    .onPrimaryContainer,
+                                                                fontWeight:
+                                                                    FontWeight.w800,
+                                                                fontSize: 32,
+                                                              ),
+                                                            ),
+                                                          ),
+                                                  ),
+                                                ),
+                                              ),
+                                              if (isOwnProfile)
+                                                const SizedBox.shrink(),
+                                            ],
+                                          ),
+                                          const SizedBox(width: 14),
+                                          Expanded(
+                                            child: Column(
+                                              crossAxisAlignment:
+                                                  CrossAxisAlignment.start,
+                                              children: [
+                                                Text(
+                                                  (user.displayName != null &&
+                                                          user.displayName!
+                                                              .trim()
+                                                              .isNotEmpty)
+                                                      ? user.displayName!
+                                                      : user.username,
+                                                  maxLines: 1,
+                                                  overflow:
+                                                      TextOverflow.ellipsis,
+                                                  style: theme
+                                                      .textTheme.titleLarge
+                                                      ?.copyWith(
+                                                    fontWeight:
+                                                        FontWeight.w800,
+                                                    height: 1.1,
+                                                  ),
+                                                ),
+                                                const SizedBox(height: 2),
+                                                Text(
+                                                  '@${user.username.toLowerCase().replaceAll(' ', '_')}',
+                                                  maxLines: 1,
+                                                  overflow:
+                                                      TextOverflow.ellipsis,
+                                                  style: theme
+                                                      .textTheme.bodyMedium
+                                                      ?.copyWith(
+                                                    color: theme
+                                                        .colorScheme.onSurface
+                                                        .withOpacity(0.6),
+                                                  ),
+                                                ),
+                                                const SizedBox(height: 10),
+                                                if ((user.bio ?? '')
+                                                    .trim()
+                                                    .isNotEmpty)
+                                                  Text(
+                                                    user.bio!.trim(),
+                                                    maxLines: 3,
+                                                    overflow:
+                                                        TextOverflow.ellipsis,
+                                                    style: theme
+                                                        .textTheme.bodyMedium
+                                                        ?.copyWith(
+                                                      color: theme.colorScheme
+                                                          .onSurface
+                                                          .withOpacity(0.8),
+                                                      height: 1.25,
+                                                    ),
+                                                  ),
+                                              ],
+                                            ),
+                                          ),
+                                        ],
                                       ),
-                                    ),
+                                      const SizedBox(height: 16),
+                                      Padding(
+                                        padding: const EdgeInsets.symmetric(
+                                            horizontal: 8),
+                                        child: Row(
+                                          mainAxisAlignment:
+                                              MainAxisAlignment.center,
+                                          children: [
+                                            StreamBuilder<int>(
+                                              stream: PostService.instance
+                                                  .watchPostCountByAuthor(
+                                                authorId: user.id,
+                                              ),
+                                              builder: (context, snapshot) {
+                                                final count =
+                                                    snapshot.data ?? 0;
+                                                return _ProfileStat(
+                                                  label: 'Posts',
+                                                  value: count.toString(),
+                                                );
+                                              },
+                                            ),
+                                            Container(
+                                              height: 26,
+                                              width: 1,
+                                              color: theme.dividerColor,
+                                              margin:
+                                                  const EdgeInsets.symmetric(
+                                                      horizontal: 18),
+                                            ),
+                                            _FollowersStat(
+                                              user: user,
+                                              onTap: () {
+                                                _showFollowListSheet(
+                                                  context,
+                                                  title: 'Followers',
+                                                  usersStream:
+                                                      _usersStreamFromIds(
+                                                    FollowService.instance
+                                                        .watchFollowers(
+                                                            uid: user.id),
+                                                  ),
+                                                );
+                                              },
+                                            ),
+                                            Container(
+                                              height: 26,
+                                              width: 1,
+                                              color: theme.dividerColor,
+                                              margin:
+                                                  const EdgeInsets.symmetric(
+                                                      horizontal: 18),
+                                            ),
+                                            _FollowingStat(
+                                              user: user,
+                                              onTap: () {
+                                                _showFollowListSheet(
+                                                  context,
+                                                  title: 'Following',
+                                                  usersStream:
+                                                      _usersStreamFromIds(
+                                                    FollowService.instance
+                                                        .watchFollowing(
+                                                            uid: user.id),
+                                                  ),
+                                                );
+                                              },
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                      const SizedBox(height: 16),
+                                      if (!isOwnProfile)
+                                        Row(
+                                          children: [
+                                            Expanded(
+                                              child: OutlinedButton.icon(
+                                                onPressed: _isStartingChat
+                                                    ? null
+                                                    : () async {
+                                                  final meNow = AuthService
+                                                      .instance.currentUser;
+                                                  if (meNow == null) {
+                                                    if (!context.mounted) {
+                                                      return;
+                                                    }
+                                                    ScaffoldMessenger.of(context)
+                                                        .showSnackBar(
+                                                      const SnackBar(
+                                                        content: Text(
+                                                          'Please log in to send a message.',
+                                                        ),
+                                                      ),
+                                                    );
+                                                    return;
+                                                  }
+
+                                                  final eitherBlocked =
+                                                      await BlockService
+                                                              .instance
+                                                              .isBlocked(
+                                                            fromUserId:
+                                                                meNow.id,
+                                                            toUserId: user.id,
+                                                          ) ||
+                                                          await BlockService
+                                                              .instance
+                                                              .isBlocked(
+                                                            fromUserId: user.id,
+                                                            toUserId:
+                                                                meNow.id,
+                                                          );
+                                                  if (eitherBlocked) {
+                                                    if (!context.mounted) {
+                                                      return;
+                                                    }
+                                                    ScaffoldMessenger.of(context)
+                                                        .showSnackBar(
+                                                      const SnackBar(
+                                                        content: Text(
+                                                          'You can\'t start a chat because there is a block between you.',
+                                                        ),
+                                                      ),
+                                                    );
+                                                    return;
+                                                  }
+
+                                                  try {
+                                                    if (mounted) {
+                                                      setState(() {
+                                                        _isStartingChat =
+                                                            true;
+                                                      });
+                                                    }
+                                                    final chatId =
+                                                        await ChatService
+                                                            .instance
+                                                            .createOrGetDirectChat(
+                                                      me: meNow,
+                                                      other: user,
+                                                    );
+                                                    if (!context.mounted) {
+                                                      return;
+                                                    }
+                                                    setState(() {
+                                                      _isStartingChat =
+                                                          false;
+                                                    });
+                                                    Navigator.of(context).push(
+                                                      MaterialPageRoute(
+                                                        builder: (_) =>
+                                                            ChatDetailScreen(
+                                                          chatId: chatId,
+                                                          title: user.username,
+                                                          otherUserId: user.id,
+                                                        ),
+                                                      ),
+                                                    );
+                                                  } catch (e) {
+                                                    if (!context.mounted) {
+                                                      return;
+                                                    }
+                                                    setState(() {
+                                                      _isStartingChat =
+                                                          false;
+                                                    });
+                                                    ScaffoldMessenger.of(context)
+                                                        .showSnackBar(
+                                                      SnackBar(
+                                                        content: Text(
+                                                          'Failed to start chat: $e',
+                                                        ),
+                                                      ),
+                                                    );
+                                                  }
+                                                },
+                                                icon: _isStartingChat
+                                                    ? const SizedBox(
+                                                        width: 18,
+                                                        height: 18,
+                                                        child:
+                                                            CircularProgressIndicator(
+                                                          strokeWidth: 2,
+                                                        ),
+                                                      )
+                                                    : const Icon(
+                                                        IOSIcons.chat,
+                                                        size: 18,
+                                                      ),
+                                                label:
+                                                    const Text('Message'),
+                                                style:
+                                                    OutlinedButton.styleFrom(
+                                                  padding:
+                                                      const EdgeInsets.symmetric(
+                                                    vertical: 12,
+                                                  ),
+                                                  side: BorderSide(
+                                                    color: theme
+                                                        .colorScheme.outline,
+                                                  ),
+                                                  shape:
+                                                      RoundedRectangleBorder(
+                                                    borderRadius:
+                                                        BorderRadius.circular(
+                                                            18),
+                                                  ),
+                                                ),
+                                              ),
+                                            ),
+                                            const SizedBox(width: 12),
+                                            Expanded(
+                                              child: StreamBuilder<bool>(
+                                                stream: FollowService
+                                                    .instance
+                                                    .watchIsFollowing(
+                                                  fromUserId: (me?.id ?? ''),
+                                                  toUserId: user.id,
+                                                ),
+                                                builder:
+                                                    (context, snapshot) {
+                                                  final isFollowing =
+                                                      snapshot.data ??
+                                                          false;
+                                                  return FilledButton(
+                                                    onPressed: () async {
+                                                      if (me == null) return;
+                                                      try {
+                                                        if (isFollowing) {
+                                                          await FollowService
+                                                              .instance
+                                                              .unfollow(
+                                                            fromUserId: me.id,
+                                                            toUserId: user.id,
+                                                          );
+                                                        } else {
+                                                          await FollowService
+                                                              .instance
+                                                              .follow(
+                                                            fromUserId: me.id,
+                                                            toUserId: user.id,
+                                                          );
+                                                        }
+                                                      } catch (e) {
+                                                        if (mounted) {
+                                                          ScaffoldMessenger.of(
+                                                                  context)
+                                                              .showSnackBar(
+                                                            SnackBar(
+                                                              content: Text(
+                                                                  'Error: $e'),
+                                                            ),
+                                                          );
+                                                        }
+                                                      }
+                                                    },
+                                                    style: FilledButton
+                                                        .styleFrom(
+                                                      backgroundColor:
+                                                          const Color(
+                                                              0xFFD4943A),
+                                                      foregroundColor:
+                                                          Colors.white,
+                                                      padding:
+                                                          const EdgeInsets
+                                                              .symmetric(
+                                                        vertical: 12,
+                                                      ),
+                                                      shape:
+                                                          RoundedRectangleBorder(
+                                                        borderRadius:
+                                                            BorderRadius
+                                                                .circular(18),
+                                                      ),
+                                                    ),
+                                                    child: Text(isFollowing
+                                                        ? 'Following'
+                                                        : 'Follow'),
+                                                  );
+                                                },
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      if (isOwnProfile)
+                                        SizedBox(
+                                          width: double.infinity,
+                                          child: OutlinedButton.icon(
+                                            onPressed: () {
+                                              Navigator.of(context).push(
+                                                MaterialPageRoute(
+                                                  builder: (_) =>
+                                                      EditProfileScreen(
+                                                    user: user,
+                                                  ),
+                                                ),
+                                              );
+                                            },
+                                            icon: const Icon(
+                                              IOSIcons.editOutlined,
+                                              size: 18,
+                                            ),
+                                            label: const Text('Edit Profile'),
+                                            style: OutlinedButton.styleFrom(
+                                              padding:
+                                                  const EdgeInsets.symmetric(
+                                                vertical: 12,
+                                              ),
+                                              side: BorderSide(
+                                                color:
+                                                    theme.colorScheme.outline,
+                                              ),
+                                              shape: RoundedRectangleBorder(
+                                                borderRadius:
+                                                    BorderRadius.circular(18),
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                      const SizedBox(height: 10),
+                                      Row(
+                                        children: [
+                                          Expanded(
+                                            child: OutlinedButton.icon(
+                                              onPressed: () =>
+                                                  _copyProfileLink(user),
+                                              icon: const Icon(
+                                                IOSIcons.attachFile,
+                                                size: 18,
+                                              ),
+                                              label: const Text('Copy link'),
+                                              style: OutlinedButton.styleFrom(
+                                                padding:
+                                                    const EdgeInsets.symmetric(
+                                                  vertical: 12,
+                                                ),
+                                                shape:
+                                                    RoundedRectangleBorder(
+                                                  borderRadius:
+                                                      BorderRadius.circular(18),
+                                                ),
+                                              ),
+                                            ),
+                                          ),
+                                          const SizedBox(width: 12),
+                                          Expanded(
+                                            child: OutlinedButton.icon(
+                                              onPressed: () =>
+                                                  _shareProfile(user),
+                                              icon: const Icon(
+                                                IOSIcons.shareUp,
+                                                size: 18,
+                                              ),
+                                              label: const Text('Share'),
+                                              style: OutlinedButton.styleFrom(
+                                                padding:
+                                                    const EdgeInsets.symmetric(
+                                                  vertical: 12,
+                                                ),
+                                                shape:
+                                                    RoundedRectangleBorder(
+                                                  borderRadius:
+                                                      BorderRadius.circular(18),
+                                                ),
+                                              ),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ],
                                   ),
                                 ),
                               ),
-                            const SizedBox(height: 16),
+                            ),
+                            const SizedBox(height: 14),
                           ],
                         ),
                       ),
@@ -406,13 +728,18 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     child: Container(
                       color: theme.scaffoldBackgroundColor,
                       padding: const EdgeInsets.symmetric(horizontal: 16),
-                      child: StreamBuilder<List<Post>>(
-                        stream: PostService.instance.watchRecentPosts(),
-                        builder: (context, snapshot) {
-                          final all = snapshot.data ?? const <Post>[];
-                          final myPosts = all
-                              .where((p) => p.authorId == user.id)
-                              .toList();
+                      child: RefreshIndicator(
+                        onRefresh: () async {
+                          setState(() {});
+                        },
+                        child: StreamBuilder<List<Post>>(
+                          stream: PostService.instance.watchPostsByAuthor(
+                            authorId: user.id,
+                          ),
+                          builder: (context, snapshot) {
+                            final isLoading =
+                                snapshot.connectionState == ConnectionState.waiting;
+                            final myPosts = snapshot.data ?? const <Post>[];
                           final mediaPosts = myPosts
                               .where((p) =>
                                   p.mediaUrl != null &&
@@ -426,29 +753,42 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                   p.mediaType == 'text')
                               .toList();
 
+                          if (isLoading && myPosts.isEmpty) {
+                            return const Center(
+                              child: SizedBox(
+                                width: 24,
+                                height: 24,
+                                child: CircularProgressIndicator(strokeWidth: 2),
+                              ),
+                            );
+                          }
+
                           if (myPosts.isEmpty) {
-                            return Column(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Icon(
-                                  IOSIcons.gridOff,
-                                  size: 40,
-                                  color: theme.colorScheme.onSurface.withOpacity(0.6),
-                                ),
-                                const SizedBox(height: 12),
-                                Text(
-                                  'No posts yet',
-                                  style: theme.textTheme.titleSmall,
-                                ),
-                                const SizedBox(height: 4),
-                                Text(
-                                  'Share your first moment to see it here.',
-                                  textAlign: TextAlign.center,
-                                  style: theme.textTheme.bodySmall?.copyWith(
-                                    color: theme.colorScheme.onSurface.withOpacity(0.7),
+                            return Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 32),
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(
+                                    IOSIcons.gridOff,
+                                    size: 40,
+                                    color: theme.colorScheme.onSurface.withOpacity(0.6),
                                   ),
-                                ),
-                              ],
+                                  const SizedBox(height: 12),
+                                  Text(
+                                    'No posts yet',
+                                    style: theme.textTheme.titleSmall,
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    'Share your first moment to see it here.',
+                                    textAlign: TextAlign.center,
+                                    style: theme.textTheme.bodySmall?.copyWith(
+                                      color: theme.colorScheme.onSurface.withOpacity(0.7),
+                                    ),
+                                  ),
+                                ],
+                              ),
                             );
                           }
 
@@ -500,14 +840,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                       child: Stack(
                                         fit: StackFit.expand,
                                         children: [
-                                          p.mediaUrl != null
-                                              ? Image.network(
-                                                  p.mediaUrl!,
-                                                  fit: BoxFit.cover,
-                                                )
-                                              : Container(
-                                                  color: theme.colorScheme.surfaceContainer,
-                                                ),
+                                          SafeNetworkImage(
+                                            url: p.mediaUrl,
+                                            fit: BoxFit.cover,
+                                          ),
                                           if (p.mediaType == 'video')
                                             const Positioned(
                                               bottom: 4,
@@ -592,9 +928,28 @@ class _ProfileScreenState extends State<ProfileScreen> {
                             case _ProfileTabType.list:
                               // Show text posts as a list.
                               if (textPosts.isEmpty) {
-                                return const Center(child: Text('No text posts'));
+                                return Padding(
+                                  padding: const EdgeInsets.symmetric(vertical: 32),
+                                  child: Column(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Icon(
+                                        IOSIcons.list,
+                                        size: 40,
+                                        color: theme.colorScheme.onSurface
+                                            .withOpacity(0.6),
+                                      ),
+                                      const SizedBox(height: 12),
+                                      Text(
+                                        'No text posts',
+                                        style: theme.textTheme.titleSmall,
+                                      ),
+                                    ],
+                                  ),
+                                );
                               }
                               return ListView.separated(
+                                padding: const EdgeInsets.only(bottom: 24),
                                 shrinkWrap: true,
                                 physics: const NeverScrollableScrollPhysics(),
                                 itemCount: textPosts.length,
@@ -629,31 +984,50 @@ class _ProfileScreenState extends State<ProfileScreen> {
                               return StreamBuilder<List<Reel>>(
                                 stream: ReelService.instance.watchReels(),
                                 builder: (context, snap) {
+                                  final reelsLoading = snap.connectionState ==
+                                      ConnectionState.waiting;
                                   final allReels = snap.data ?? const <Reel>[];
                                   final myReels = allReels
                                       .where((r) => r.authorId == user.id)
                                       .toList();
 
+                                  if (reelsLoading && allReels.isEmpty) {
+                                    return const Center(
+                                      child: SizedBox(
+                                        width: 24,
+                                        height: 24,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                        ),
+                                      ),
+                                    );
+                                  }
+
                                   if (myReels.isEmpty) {
-                                    return Column(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        Icon(
-                                          IOSIcons.film,
-                                          size: 40,
-                                          color: theme.colorScheme.onSurface
-                                              .withOpacity(0.6),
-                                        ),
-                                        const SizedBox(height: 12),
-                                        Text(
-                                          'No reels yet',
-                                          style: theme.textTheme.titleSmall,
-                                        ),
-                                      ],
+                                    return Padding(
+                                      padding: const EdgeInsets.symmetric(
+                                          vertical: 32),
+                                      child: Column(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Icon(
+                                            IOSIcons.film,
+                                            size: 40,
+                                            color: theme.colorScheme.onSurface
+                                                .withOpacity(0.6),
+                                          ),
+                                          const SizedBox(height: 12),
+                                          Text(
+                                            'No reels yet',
+                                            style: theme.textTheme.titleSmall,
+                                          ),
+                                        ],
+                                      ),
                                     );
                                   }
 
                                   return GridView.builder(
+                                    padding: const EdgeInsets.only(bottom: 24),
                                     shrinkWrap: true,
                                     physics:
                                         const NeverScrollableScrollPhysics(),
@@ -682,11 +1056,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                           child: Stack(
                                             fit: StackFit.expand,
                                             children: [
-                                              if (r.mediaType == 'image' &&
-                                                  r.mediaUrl != null &&
-                                                  r.mediaUrl!.isNotEmpty)
-                                                Image.network(
-                                                  r.mediaUrl!,
+                                              if (r.mediaType == 'image')
+                                                SafeNetworkImage(
+                                                  url: r.mediaUrl,
                                                   fit: BoxFit.cover,
                                                 )
                                               else
@@ -865,38 +1237,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       ),
                     ),
                   ),
+                  ),
                 ],
               ),
-              // Camera button overlay (must be AFTER CustomScrollView to render on top)
-              if (isOwnProfile)
-                Positioned(
-                  top: 160,
-                  right: 12,
-                  child: GestureDetector(
-                    onTap: () => _pickBackgroundImage(user),
-                    child: Container(
-                      width: 40,
-                      height: 40,
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF8D5CF6),
-                        shape: BoxShape.circle,
-                        border: Border.all(color: Colors.white, width: 2),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withOpacity(0.2),
-                            blurRadius: 4,
-                            offset: const Offset(0, 2),
-                          ),
-                        ],
-                      ),
-                      child: const Icon(
-                        CupertinoIcons.camera,
-                        color: Colors.white,
-                        size: 20,
-                      ),
-                    ),
-                  ),
-                ),
               // Settings button (must be AFTER CustomScrollView to render on top)
               if (isOwnProfile)
                 Positioned(
@@ -978,14 +1321,25 @@ class _ProfileScreenState extends State<ProfileScreen> {
                           final user = users[index];
                           return ListTile(
                             leading: CircleAvatar(
-                              backgroundImage: user.photoUrl != null && user.photoUrl!.isNotEmpty
-                                  ? NetworkImage(user.photoUrl!)
-                                  : null,
-                              child: user.photoUrl == null || user.photoUrl!.isEmpty
-                                  ? Text(user.username.isNotEmpty
-                                      ? user.username[0].toUpperCase()
-                                      : 'U')
-                                  : null,
+                              backgroundColor:
+                                  Theme.of(context).colorScheme.surfaceVariant,
+                              child: ClipOval(
+                                child: (user.photoUrl != null &&
+                                        user.photoUrl!.trim().isNotEmpty)
+                                    ? SafeNetworkImage(
+                                        url: user.photoUrl,
+                                        width: 40,
+                                        height: 40,
+                                        fit: BoxFit.cover,
+                                      )
+                                    : Center(
+                                        child: Text(
+                                          user.username.isNotEmpty
+                                              ? user.username[0].toUpperCase()
+                                              : 'U',
+                                        ),
+                                      ),
+                              ),
                             ),
                             title: Text(user.username),
                             subtitle: user.displayName != null ? Text(user.displayName!) : null,
@@ -1007,60 +1361,121 @@ class _ProfileScreenState extends State<ProfileScreen> {
     if (ids.isEmpty) return [];
 
     // Firestore does not support whereIn with > 10; we support up to 30.
-    return Future(() async {
-      final limited = ids.length > 30 ? ids.sublist(0, 30) : ids;
-      final joined = limited.join(',');
-      final rows = await AuthService.instance.api
-          .getListOfMaps('/api/users?ids=$joined');
-      return rows.map(AppUser.fromJson).toList();
-    });
+    final limited = ids.length > 30 ? ids.sublist(0, 30) : ids;
+    final joined = limited.join(',');
+    final rows = await AuthService.instance.api.getListOfMaps(
+      '/api/users?ids=$joined',
+    );
+    return rows.map(AppUser.fromJson).toList();
   }
 
-  Future<void> _pickAvatarImage(AppUser user) async {
-    final picker = ImagePicker();
-    final pickedFile = await picker.pickImage(source: ImageSource.gallery);
-    if (pickedFile == null) return;
+}
 
-    try {
-      final bytes = await pickedFile.readAsBytes();
-      final res = await AuthService.instance.api.uploadFile(
-        path: '/api/uploads',
-        bytes: bytes,
-        filename: pickedFile.name,
-      );
-      final downloadUrl = (res['url'] as String?) ?? '';
-      if (downloadUrl.isEmpty) throw Exception('Upload failed');
 
-      await AuthService.instance.api.patchNoContent(
-        '/api/users/me',
-        body: {'photoUrl': downloadUrl},
-      );
+class _ProfileBackgroundMedia extends StatefulWidget {
+  final String url;
+  final double height;
+  final bool isVideo;
 
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Profile photo updated')),
-        );
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to upload avatar: $e')),
-        );
-      }
+  const _ProfileBackgroundMedia({
+    required this.url,
+    required this.height,
+    required this.isVideo,
+  });
+
+  @override
+  State<_ProfileBackgroundMedia> createState() =>
+      _ProfileBackgroundMediaState();
+}
+
+class _ProfileBackgroundMediaState extends State<_ProfileBackgroundMedia> {
+  VideoPlayerController? _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.isVideo) {
+      final c = VideoPlayerController.networkUrl(Uri.parse(widget.url));
+      _controller = c;
+      c.setLooping(true);
+      c.setVolume(0);
+      c.initialize().then((_) {
+        if (!mounted) return;
+        setState(() {});
+        c.play();
+      });
     }
+  }
+
+  @override
+  void didUpdateWidget(covariant _ProfileBackgroundMedia oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.url == widget.url && oldWidget.isVideo == widget.isVideo) {
+      return;
+    }
+
+    _controller?.dispose();
+    _controller = null;
+
+    if (widget.isVideo) {
+      final c = VideoPlayerController.networkUrl(Uri.parse(widget.url));
+      _controller = c;
+      c.setLooping(true);
+      c.setVolume(0);
+      c.initialize().then((_) {
+        if (!mounted) return;
+        setState(() {});
+        c.play();
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller?.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!widget.isVideo) {
+      return SafeNetworkImage(
+        url: widget.url,
+        fit: BoxFit.cover,
+        width: double.infinity,
+        height: widget.height,
+      );
+    }
+
+    final c = _controller;
+    if (c == null || !c.value.isInitialized) {
+      return Container(color: Colors.black12);
+    }
+
+    return ClipRect(
+      child: FittedBox(
+        fit: BoxFit.cover,
+        child: SizedBox(
+          width: c.value.size.width,
+          height: c.value.size.height,
+          child: VideoPlayer(c),
+        ),
+      ),
+    );
   }
 }
 
 class _ProfileStat extends StatelessWidget {
   final String label;
   final String value;
+  final VoidCallback? onTap;
 
-  const _ProfileStat({required this.label, required this.value});
+  const _ProfileStat({required this.label, required this.value, this.onTap});
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return Column(
+    final content = Column(
       children: [
         Text(
           value,
@@ -1077,6 +1492,18 @@ class _ProfileStat extends StatelessWidget {
         ),
       ],
     );
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(14),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          child: content,
+        ),
+      ),
+    );
   }
 }
 
@@ -1088,30 +1515,14 @@ class _FollowersStat extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
     return StreamBuilder<List<String>>(
       stream: FollowService.instance.watchFollowers(uid: user.id),
       builder: (context, snapshot) {
         final count = snapshot.data?.length ?? 0;
-        return GestureDetector(
+        return _ProfileStat(
+          label: 'Followers',
+          value: '$count',
           onTap: onTap,
-          child: Column(
-            children: [
-              Text(
-                '$count',
-                style: theme.textTheme.titleLarge?.copyWith(
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-              const SizedBox(height: 2),
-              Text(
-                'Followers',
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: theme.colorScheme.onSurface.withOpacity(0.7),
-                ),
-              ),
-            ],
-          ),
         );
       },
     );
@@ -1126,30 +1537,14 @@ class _FollowingStat extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
     return StreamBuilder<List<String>>(
       stream: FollowService.instance.watchFollowing(uid: user.id),
       builder: (context, snapshot) {
         final count = snapshot.data?.length ?? 0;
-        return GestureDetector(
+        return _ProfileStat(
+          label: 'Following',
+          value: '$count',
           onTap: onTap,
-          child: Column(
-            children: [
-              Text(
-                '$count',
-                style: theme.textTheme.titleLarge?.copyWith(
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-              const SizedBox(height: 2),
-              Text(
-                'Following',
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: theme.colorScheme.onSurface.withOpacity(0.7),
-                ),
-              ),
-            ],
-          ),
         );
       },
     );
@@ -1169,80 +1564,47 @@ class _ProfileTabRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Row(
-      children: [
-        Expanded(
-          child: _ProfileTabButton(
-            icon: IOSIcons.grid,
-            label: 'Grid',
-            isSelected: selected == _ProfileTabType.grid,
-            onTap: () => onSelected(_ProfileTabType.grid),
-          ),
+    final theme = Theme.of(context);
+    final segmented = SegmentedButton<_ProfileTabType>(
+      segments: <ButtonSegment<_ProfileTabType>>[
+        const ButtonSegment(
+          value: _ProfileTabType.grid,
+          icon: Icon(IOSIcons.grid),
+          label: Text('Grid'),
         ),
-        Expanded(
-          child: _ProfileTabButton(
-            icon: IOSIcons.list,
-            label: 'List',
-            isSelected: selected == _ProfileTabType.list,
-            onTap: () => onSelected(_ProfileTabType.list),
-          ),
+        const ButtonSegment(
+          value: _ProfileTabType.list,
+          icon: Icon(IOSIcons.list),
+          label: Text('List'),
         ),
-        Expanded(
-          child: _ProfileTabButton(
-            icon: IOSIcons.film,
-            label: 'Reels',
-            isSelected: selected == _ProfileTabType.reels,
-            onTap: () => onSelected(_ProfileTabType.reels),
-          ),
+        const ButtonSegment(
+          value: _ProfileTabType.reels,
+          icon: Icon(IOSIcons.film),
+          label: Text('Reels'),
         ),
-        Expanded(
-          child: _ProfileTabButton(
-            icon: IOSIcons.tag,
-            label: 'Tagged',
-            isSelected: selected == _ProfileTabType.tagged,
-            onTap: () => onSelected(_ProfileTabType.tagged),
-          ),
+        const ButtonSegment(
+          value: _ProfileTabType.tagged,
+          icon: Icon(IOSIcons.tag),
+          label: Text('Tagged'),
         ),
       ],
-    );
-  }
-}
-
-class _ProfileTabButton extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final bool isSelected;
-  final VoidCallback onTap;
-
-  const _ProfileTabButton({
-    required this.icon,
-    required this.label,
-    required this.isSelected,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final color = isSelected
-        ? theme.colorScheme.primary
-        : theme.colorScheme.onSurface.withOpacity(0.6);
-    return GestureDetector(
-      onTap: onTap,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, color: color, size: 24),
-          const SizedBox(height: 4),
-          Text(
-            label,
-            style: theme.textTheme.bodySmall?.copyWith(
-              color: color,
-              fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
-            ),
-          ),
-        ],
+      selected: <_ProfileTabType>{selected},
+      showSelectedIcon: false,
+      style: ButtonStyle(
+        visualDensity: const VisualDensity(horizontal: -2, vertical: -2),
+        textStyle: WidgetStatePropertyAll(
+          theme.textTheme.labelMedium?.copyWith(fontWeight: FontWeight.w600),
+        ),
       ),
+      onSelectionChanged: (selection) {
+        if (selection.isEmpty) return;
+        onSelected(selection.first);
+      },
+    );
+
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: segmented,
     );
   }
 }
