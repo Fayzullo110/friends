@@ -75,6 +75,15 @@ public class UserService {
       user.setBackgroundImageUrl(url.isEmpty() ? null : url);
     }
 
+    if (req.themeKey != null) {
+      final String key = req.themeKey.trim();
+      user.setThemeKey(key.isEmpty() ? null : key);
+    }
+
+    if (req.themeSeedColor != null) {
+      user.setThemeSeedColor(req.themeSeedColor);
+    }
+
     return userRepository.save(user);
   }
 }

@@ -355,7 +355,7 @@ class _CreateStoryScreenState extends State<CreateStoryScreen> {
       }
 
       if (!mounted) return;
-      Navigator.of(context).pop();
+      Navigator.of(context).pop(true);
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Story shared.')),
       );

@@ -9,6 +9,8 @@ public class CommentResponse {
   public long authorId;
   public String authorUsername;
   public String authorPhotoUrl;
+  public String authorThemeKey;
+  public Integer authorThemeSeedColor;
   public String text;
   public String type;
   public String mediaUrl;
@@ -25,6 +27,8 @@ public class CommentResponse {
       long authorId,
       String authorUsername,
       String authorPhotoUrl,
+      String authorThemeKey,
+      Integer authorThemeSeedColor,
       String text,
       String type,
       String mediaUrl,
@@ -39,6 +43,8 @@ public class CommentResponse {
     this.authorId = authorId;
     this.authorUsername = authorUsername;
     this.authorPhotoUrl = authorPhotoUrl;
+    this.authorThemeKey = authorThemeKey;
+    this.authorThemeSeedColor = authorThemeSeedColor;
     this.text = text;
     this.type = type;
     this.mediaUrl = mediaUrl;

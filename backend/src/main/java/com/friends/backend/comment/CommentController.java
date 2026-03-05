@@ -144,6 +144,8 @@ public class CommentController {
     final UserEntity author = userRepository.findById(c.getAuthorId()).orElse(null);
     final String authorUsername = author == null ? "user" : author.getUsername();
     final String authorPhotoUrl = author == null ? null : author.getPhotoUrl();
+    final String authorThemeKey = author == null ? null : author.getThemeKey();
+    final Integer authorThemeSeedColor = author == null ? null : author.getThemeSeedColor();
 
     final List<Long> likedBy = commentLikeRepository.findUserIdsWhoLiked(c.getId());
     final List<Long> dislikedBy = commentDislikeRepository.findUserIdsWhoDisliked(c.getId());
@@ -154,6 +156,8 @@ public class CommentController {
         c.getAuthorId(),
         authorUsername,
         authorPhotoUrl,
+        authorThemeKey,
+        authorThemeSeedColor,
         c.getText(),
         c.getType(),
         c.getMediaUrl(),

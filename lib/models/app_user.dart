@@ -5,6 +5,8 @@ class AppUser {
   final String? displayName;
   final String? photoUrl;
   final String? backgroundImageUrl;
+  final String? themeKey;
+  final int? themeSeedColor;
   final String? bio;
   final int? followersCount;
   final int? followingCount;
@@ -23,6 +25,8 @@ class AppUser {
     this.displayName,
     this.photoUrl,
     this.backgroundImageUrl,
+    this.themeKey,
+    this.themeSeedColor,
     this.bio,
     this.followersCount,
     this.followingCount,
@@ -35,6 +39,48 @@ class AppUser {
     this.lastActiveAt,
   });
 
+  AppUser copyWith({
+    String? id,
+    String? email,
+    String? username,
+    String? displayName,
+    String? photoUrl,
+    String? backgroundImageUrl,
+    String? themeKey,
+    int? themeSeedColor,
+    String? bio,
+    int? followersCount,
+    int? followingCount,
+    String? firstName,
+    String? lastName,
+    int? age,
+    bool? isOfficial,
+    String? badgeType,
+    bool? isOnline,
+    DateTime? lastActiveAt,
+  }) {
+    return AppUser(
+      id: id ?? this.id,
+      email: email ?? this.email,
+      username: username ?? this.username,
+      displayName: displayName ?? this.displayName,
+      photoUrl: photoUrl ?? this.photoUrl,
+      backgroundImageUrl: backgroundImageUrl ?? this.backgroundImageUrl,
+      themeKey: themeKey ?? this.themeKey,
+      themeSeedColor: themeSeedColor ?? this.themeSeedColor,
+      bio: bio ?? this.bio,
+      followersCount: followersCount ?? this.followersCount,
+      followingCount: followingCount ?? this.followingCount,
+      firstName: firstName ?? this.firstName,
+      lastName: lastName ?? this.lastName,
+      age: age ?? this.age,
+      isOfficial: isOfficial ?? this.isOfficial,
+      badgeType: badgeType ?? this.badgeType,
+      isOnline: isOnline ?? this.isOnline,
+      lastActiveAt: lastActiveAt ?? this.lastActiveAt,
+    );
+  }
+
   factory AppUser.fromJson(Map<String, dynamic> json) {
     return AppUser(
       id: json['id'].toString(),
@@ -43,6 +89,8 @@ class AppUser {
       displayName: json['displayName'] as String?,
       photoUrl: json['photoUrl'] as String?,
       backgroundImageUrl: json['backgroundImageUrl'] as String?,
+      themeKey: json['themeKey'] as String?,
+      themeSeedColor: (json['themeSeedColor'] as num?)?.toInt(),
       bio: json['bio'] as String?,
       followersCount: (json['followersCount'] as num?)?.toInt(),
       followingCount: (json['followingCount'] as num?)?.toInt(),
@@ -65,6 +113,8 @@ class AppUser {
       'displayName': displayName,
       'photoUrl': photoUrl,
       'backgroundImageUrl': backgroundImageUrl,
+      'themeKey': themeKey,
+      'themeSeedColor': themeSeedColor,
       'bio': bio,
       'followersCount': followersCount,
       'followingCount': followingCount,

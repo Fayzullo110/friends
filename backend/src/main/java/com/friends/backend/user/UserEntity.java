@@ -33,6 +33,12 @@ public class UserEntity {
   @Column(name = "background_image_url", columnDefinition = "TEXT")
   private String backgroundImageUrl;
 
+  @Column(name = "theme_key", length = 40)
+  private String themeKey;
+
+  @Column(name = "theme_seed_color")
+  private Integer themeSeedColor;
+
   @Column(columnDefinition = "TEXT")
   private String bio;
 
@@ -126,6 +132,22 @@ public class UserEntity {
 
   public void setBackgroundImageUrl(String backgroundImageUrl) {
     this.backgroundImageUrl = backgroundImageUrl;
+  }
+
+  public String getThemeKey() {
+    return themeKey;
+  }
+
+  public void setThemeKey(String themeKey) {
+    this.themeKey = themeKey;
+  }
+
+  public Integer getThemeSeedColor() {
+    return themeSeedColor;
+  }
+
+  public void setThemeSeedColor(Integer themeSeedColor) {
+    this.themeSeedColor = themeSeedColor;
   }
 
   public String getBio() {

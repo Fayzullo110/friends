@@ -13,6 +13,7 @@ import '../../services/follow_service.dart';
 import '../../services/post_service.dart';
 import '../../services/reel_service.dart';
 import '../../theme/ios_icons.dart';
+import '../../theme/app_themes.dart';
 import '../chat/chat_detail_screen.dart';
 import '../post/post_viewer_screen.dart';
 import '../reels/reels_screen.dart';
@@ -145,6 +146,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
           );
         }
 
+        final accent = AppThemes.seedFor(
+          themeKey: user.themeKey,
+          themeSeedColor: user.themeSeedColor,
+        );
+
         final me = AuthService.instance.currentUser;
         final isOwnProfile = widget.userId == null || (me != null && me.id == user.id);
 
@@ -163,7 +169,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       begin: Alignment.topCenter,
                       end: Alignment.bottomCenter,
                       colors: [
-                        theme.colorScheme.primary.withOpacity(0.12),
+                        accent.withOpacity(0.22),
                         theme.scaffoldBackgroundColor,
                       ],
                     ),
@@ -246,8 +252,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                                             fit: BoxFit.cover,
                                                           )
                                                         : Container(
-                                                            color: theme.colorScheme
-                                                                .primaryContainer,
+                                                            color: accent.withOpacity(0.18),
                                                             alignment:
                                                                 Alignment.center,
                                                             child: Text(
@@ -295,6 +300,34 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                                     fontWeight:
                                                         FontWeight.w800,
                                                     height: 1.1,
+                                                  ),
+                                                ),
+                                                const SizedBox(height: 6),
+                                                Container(
+                                                  padding: const EdgeInsets.symmetric(
+                                                    horizontal: 10,
+                                                    vertical: 4,
+                                                  ),
+                                                  decoration: BoxDecoration(
+                                                    color: accent.withOpacity(0.12),
+                                                    borderRadius:
+                                                        BorderRadius.circular(999),
+                                                    border: Border.all(
+                                                      color: accent.withOpacity(0.35),
+                                                    ),
+                                                  ),
+                                                  child: Text(
+                                                    AppThemes.labelFor(
+                                                      themeKey: user.themeKey,
+                                                      themeSeedColor:
+                                                          user.themeSeedColor,
+                                                    ),
+                                                    style: theme
+                                                        .textTheme.labelSmall
+                                                        ?.copyWith(
+                                                      color: accent,
+                                                      fontWeight: FontWeight.w700,
+                                                    ),
                                                   ),
                                                 ),
                                                 const SizedBox(height: 2),

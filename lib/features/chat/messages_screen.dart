@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import 'chat_detail_screen.dart';
@@ -10,8 +12,10 @@ import '../../models/user_status.dart';
 import '../../services/chat_service.dart';
 import '../../services/auth_service.dart';
 import '../../services/follow_service.dart';
+import '../../services/user_cache_service.dart';
 import '../../services/user_status_service.dart';
 import '../../theme/ios_icons.dart';
+import '../../theme/app_themes.dart';
 import '../../widgets/safe_network_image.dart';
 
 class MessagesScreen extends StatefulWidget {
@@ -25,7 +29,24 @@ class _MessagesScreenState extends State<MessagesScreen> {
   String _filter = 'all';
 
   String? _followingForId;
-  Future<List<String>>? _followingFuture;
+  List<String> _followingIds = const <String>[];
+  bool _followingLoading = false;
+
+  late final StreamSubscription<String> _userCacheSub;
+
+  @override
+  void initState() {
+    super.initState();
+    _userCacheSub = UserCacheService.instance.updates.listen((_) {
+      if (mounted) setState(() {});
+    });
+  }
+
+  @override
+  void dispose() {
+    _userCacheSub.cancel();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -38,6 +59,8 @@ class _MessagesScreenState extends State<MessagesScreen> {
         body: const Center(child: Text('Please log in to use messages.')),
       );
     }
+
+    _ensureFollowingLoaded(me.id);
 
     final isDark = theme.brightness == Brightness.dark;
 
@@ -208,8 +231,17 @@ class _MessagesScreenState extends State<MessagesScreen> {
                       (m) => m != me.id,
                       orElse: () => me.id,
                     );
+                    UserCacheService.instance.get(otherId);
                     final title = c.memberUsernames[otherId] ?? 'Chat';
                     final photoUrl = c.memberPhotoUrls[otherId];
+                    final u = UserCacheService.instance.peek(otherId);
+                    final accent = AppThemes.seedFor(
+                      themeKey: u?.themeKey,
+                      themeSeedColor: u?.themeSeedColor,
+                    );
+                    final effectivePhoto = (u?.photoUrl?.trim().isNotEmpty ?? false)
+                        ? u!.photoUrl
+                        : photoUrl;
 
                     return ListTile(
                       contentPadding:
@@ -217,42 +249,20 @@ class _MessagesScreenState extends State<MessagesScreen> {
                       leading: c.isGroup
                           ? CircleAvatar(
                               radius: 22,
-                              backgroundColor: theme.colorScheme.primary
-                                  .withOpacity(0.08),
+                              backgroundColor:
+                                  theme.colorScheme.primary.withOpacity(0.08),
                               child: Text(
-                                title.isNotEmpty
-                                    ? title[0].toUpperCase()
-                                    : 'C',
+                                title.isNotEmpty ? title[0].toUpperCase() : 'C',
                                 style: TextStyle(
                                   color: theme.colorScheme.primary,
                                   fontWeight: FontWeight.w600,
                                 ),
                               ),
                             )
-                          : CircleAvatar(
-                              radius: 22,
-                              backgroundColor:
-                                  theme.colorScheme.primary.withOpacity(0.08),
-                              child: ClipOval(
-                                child: (photoUrl != null && photoUrl.isNotEmpty)
-                                    ? SafeNetworkImage(
-                                        url: photoUrl,
-                                        width: 44,
-                                        height: 44,
-                                        fit: BoxFit.cover,
-                                      )
-                                    : Center(
-                                        child: Text(
-                                          title.isNotEmpty
-                                              ? title[0].toUpperCase()
-                                              : 'C',
-                                          style: TextStyle(
-                                            color: theme.colorScheme.primary,
-                                            fontWeight: FontWeight.w600,
-                                          ),
-                                        ),
-                                      ),
-                              ),
+                          : _ThemedChatAvatar(
+                              title: title,
+                              accent: accent,
+                              photoUrl: effectivePhoto,
                             ),
                       title: Text(
                         title,
@@ -326,58 +336,65 @@ class _MessagesScreenState extends State<MessagesScreen> {
   }
 
   Widget _buildFriendsRow(BuildContext context, ThemeData theme, String currentUserId) {
-    if (_followingForId != currentUserId || _followingFuture == null) {
-      _followingForId = currentUserId;
-      _followingFuture = _getFollowingIds(currentUserId);
-    }
-    return FutureBuilder<List<String>>(
-      future: _followingFuture,
-      builder: (context, followingSnapshot) {
-        final followingIds = followingSnapshot.data ?? [];
+    final followingIds = _followingIds;
+    final ids = followingIds.isEmpty ? <String>[currentUserId] : followingIds;
 
-        return StreamBuilder<List<UserStatus>>(
-          stream: UserStatusService.instance.watchFriendsStatuses(
-            currentUserId: currentUserId,
-            followingIds: followingIds.isEmpty ? [currentUserId] : followingIds,
-          ),
-          builder: (context, snapshot) {
-            final statuses = snapshot.data ?? [];
+    return StreamBuilder<List<UserStatus>>(
+      stream: UserStatusService.instance.watchFriendsStatuses(
+        currentUserId: currentUserId,
+        followingIds: ids,
+      ),
+      builder: (context, snapshot) {
+        final statuses = snapshot.data ?? [];
 
-            // Build the list including "My Status" as first item
-            return ListView.separated(
-              scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              itemCount: statuses.isEmpty ? 1 : statuses.length + 1,
-              separatorBuilder: (_, __) => const SizedBox(width: 12),
-              itemBuilder: (context, index) {
-                if (index == 0) {
-                  // My Status slot
-                  return _buildMyStatusItem(context, theme, currentUserId);
-                }
+        // Build the list including "My Status" as first item
+        return ListView.separated(
+          scrollDirection: Axis.horizontal,
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          itemCount: statuses.isEmpty ? 1 : statuses.length + 1,
+          separatorBuilder: (_, __) => const SizedBox(width: 12),
+          itemBuilder: (context, index) {
+            if (index == 0) {
+              // My Status slot
+              return _buildMyStatusItem(context, theme, currentUserId);
+            }
 
-                final status = statuses[index - 1];
-                final isMyStatus = status.userId == currentUserId;
+            final status = statuses[index - 1];
+            final isMyStatus = status.userId == currentUserId;
 
-                if (isMyStatus) {
-                  // Skip my status in the list since we already have it as first item
-                  return const SizedBox.shrink();
-                }
+            if (isMyStatus) {
+              // Skip my status in the list since we already have it as first item
+              return const SizedBox.shrink();
+            }
 
-                return _buildStatusItem(context, theme, status);
-              },
-            );
+            return _buildStatusItem(context, theme, status);
           },
         );
       },
     );
   }
 
-  Future<List<String>> _getFollowingIds(String userId) async {
-    try {
-      return await FollowService.instance.getFollowingOnce(uid: userId);
-    } catch (e) {
-      return [];
-    }
+  void _ensureFollowingLoaded(String currentUserId) {
+    if (_followingLoading) return;
+    if (_followingForId == currentUserId) return;
+
+    _followingForId = currentUserId;
+    _followingLoading = true;
+    _followingIds = const <String>[];
+
+    FollowService.instance.getFollowingOnce(uid: currentUserId).then((ids) {
+      if (!mounted) return;
+      setState(() {
+        _followingIds = ids;
+        _followingLoading = false;
+      });
+    }).catchError((_) {
+      if (!mounted) return;
+      setState(() {
+        _followingIds = const <String>[];
+        _followingLoading = false;
+      });
+    });
   }
 
   Widget _buildMyStatusItem(BuildContext context, ThemeData theme, String userId) {
@@ -591,6 +608,56 @@ class _MessagesScreenState extends State<MessagesScreen> {
           );
         }
       },
+    );
+  }
+}
+
+class _ThemedChatAvatar extends StatelessWidget {
+  final String title;
+  final Color accent;
+  final String? photoUrl;
+
+  const _ThemedChatAvatar({
+    required this.title,
+    required this.accent,
+    required this.photoUrl,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final avatar = CircleAvatar(
+      radius: 22,
+      backgroundColor: accent.withOpacity(0.12),
+      child: ClipOval(
+        child: (photoUrl != null && photoUrl!.trim().isNotEmpty)
+            ? SafeNetworkImage(
+                url: photoUrl,
+                width: 44,
+                height: 44,
+                fit: BoxFit.cover,
+              )
+            : Center(
+                child: Text(
+                  title.isNotEmpty ? title[0].toUpperCase() : 'C',
+                  style: TextStyle(
+                    color: accent,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+      ),
+    );
+
+    return Container(
+      padding: const EdgeInsets.all(2),
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        border: Border.all(
+          color: accent.withOpacity(0.55),
+          width: 2,
+        ),
+      ),
+      child: avatar,
     );
   }
 }

@@ -14,6 +14,7 @@ import '../../services/post_service.dart';
 import '../../services/story_service.dart';
 import '../../services/auth_service.dart';
 import '../../services/block_service.dart';
+import '../../theme/app_themes.dart';
 import '../chat/gif_picker_sheet.dart';
 import '../notifications/notifications_screen.dart';
 import '../friends/user_search_screen.dart';
@@ -577,6 +578,10 @@ class _CommentsSheetState extends State<_CommentsSheet> {
                         padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
                         itemBuilder: (context, index) {
                           final c = ordered[index];
+                          final authorAccent = AppThemes.seedFor(
+                            themeKey: c.authorThemeKey,
+                            themeSeedColor: c.authorThemeSeedColor,
+                          );
                           final currentUserId =
                               AuthService.instance.currentUser?.id;
                           final isLiked = currentUserId != null &&
@@ -593,7 +598,7 @@ class _CommentsSheetState extends State<_CommentsSheet> {
                                 CircleAvatar(
                                   radius: 16,
                                   backgroundColor:
-                                      theme.colorScheme.primary.withOpacity(0.12),
+                                      authorAccent.withOpacity(0.12),
                                   child: ClipOval(
                                     child: (c.authorPhotoUrl != null &&
                                             c.authorPhotoUrl!.trim().isNotEmpty)
@@ -611,7 +616,7 @@ class _CommentsSheetState extends State<_CommentsSheet> {
                                                       .toUpperCase()
                                                   : 'U',
                                               style: TextStyle(
-                                                color: theme.colorScheme.primary,
+                                                color: authorAccent,
                                                 fontWeight: FontWeight.w700,
                                               ),
                                             ),
@@ -629,6 +634,7 @@ class _CommentsSheetState extends State<_CommentsSheet> {
                                       style: theme.textTheme.bodyMedium
                                           ?.copyWith(
                                         fontWeight: FontWeight.w700,
+                                        color: authorAccent,
                                       ),
                                     ),
                                     const SizedBox(height: 2),
@@ -973,93 +979,120 @@ class _StoriesRowState extends State<_StoriesRow> {
                 }
                 final userIds = byUser.keys.toList();
 
-                return StreamBuilder<AppUser?>(
-                  stream: AuthService.instance.userChanges,
-                  builder: (context, meSnap) {
-                    final me = meSnap.data;
+                final meProfile = AuthService.instance.currentUser;
 
-                    return ListView.separated(
-                    scrollDirection: Axis.horizontal,
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                    itemBuilder: (context, index) {
-                      // First item is always current user shortcut.
-                      if (index == 0) {
-                        final List<Story> myStories =
-                            me != null ? byUser[me.id] ?? const <Story>[] : const <Story>[];
-                        final hasStories = myStories.isNotEmpty;
-                        const allSeen = false;
+                return ListView.separated(
+                  scrollDirection: Axis.horizontal,
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  itemBuilder: (context, index) {
+                    // First item is always current user shortcut.
+                    if (index == 0) {
+                      final List<Story> myStories = meProfile != null
+                          ? byUser[meProfile.id] ?? const <Story>[]
+                          : const <Story>[];
+                      final hasStories = myStories.isNotEmpty;
+                      const allSeen = false;
 
-                        return _StoryAvatar(
-                          label: me?.username ?? 'You',
-                          isCurrentUser: true,
-                          hasStory: hasStories,
-                          isSeen: allSeen,
-                          photoUrl: me?.photoUrl,
-                          onTap: () {
-                            if (!context.mounted) return;
-                            if (!hasStories) {
-                              Navigator.of(context).push(
-                                MaterialPageRoute(
-                                  builder: (_) => const CreateStoryScreen(),
-                                ),
+                      return _StoryAvatar(
+                        label: meProfile?.username ?? 'You',
+                        isCurrentUser: true,
+                        hasStory: hasStories,
+                        isSeen: allSeen,
+                        photoUrl: meProfile?.photoUrl,
+                        accentColor: meProfile == null
+                            ? null
+                            : AppThemes.seedFor(
+                                themeKey: meProfile.themeKey,
+                                themeSeedColor: meProfile.themeSeedColor,
+                              ),
+                        onTap: () {
+                          if (!context.mounted) return;
+                          if (!hasStories) {
+                            Navigator.of(context)
+                                .push<bool>(
+                              MaterialPageRoute(
+                                builder: (_) => const CreateStoryScreen(),
+                              ),
+                            )
+                                .then((created) async {
+                              if (created != true) return;
+                              final me = AuthService.instance.currentUser;
+                              if (me == null) return;
+                              final stories =
+                                  await StoryService.instance.getUserStoriesOnce(
+                                authorId: me.id,
                               );
-                            } else {
+                              if (!context.mounted) return;
+                              if (stories.isEmpty) return;
                               Navigator.of(context).push(
                                 MaterialPageRoute(
                                   builder: (_) => StoryViewerScreen(
-                                    stories: myStories,
+                                    stories: stories,
                                   ),
                                 ),
                               );
-                            }
-                          },
-                        );
-                      }
-
-                      // Other users' stories.
-                      final userId =
-                          index - 1 < userIds.length ? userIds[index - 1] : '';
-                      if (userId.isEmpty) {
-                        return const SizedBox.shrink();
-                      }
-
-                      final List<Story> userStories =
-                          byUser[userId] ?? const <Story>[];
-                      if (userStories.isEmpty) {
-                        return const SizedBox.shrink();
-                      }
-
-                      final firstStory = userStories.first;
-                      final username = firstStory.authorUsername.isNotEmpty
-                          ? firstStory.authorUsername
-                          : 'friend';
-
-                      const isSeen = false;
-
-                      return _StoryAvatar(
-                        label: username,
-                        isCurrentUser: false,
-                        hasStory: true,
-                        isSeen: isSeen,
-                        onTap: () {
-                          if (!context.mounted) return;
-                          Navigator.of(context).push(
-                            MaterialPageRoute(
-                              builder: (_) => StoryViewerScreen(
-                                stories: userStories,
+                            });
+                          } else {
+                            Navigator.of(context).push(
+                              MaterialPageRoute(
+                                builder: (_) => StoryViewerScreen(
+                                  stories: myStories,
+                                ),
                               ),
-                            ),
-                          );
+                            );
+                          }
                         },
                       );
-                    },
-                    separatorBuilder: (_, __) => const SizedBox(width: 12),
-                    // 1 for "You" + number of users with stories.
-                    itemCount: 1 + userIds.length,
-                  );
-                },
-              );
+                    }
+
+                    // Other users' stories.
+                    final userId =
+                        index - 1 < userIds.length ? userIds[index - 1] : '';
+                    if (userId.isEmpty) {
+                      return const SizedBox.shrink();
+                    }
+
+                    final List<Story> userStories =
+                        byUser[userId] ?? const <Story>[];
+                    if (userStories.isEmpty) {
+                      return const SizedBox.shrink();
+                    }
+
+                    final firstStory = userStories.first;
+                    final username = firstStory.authorUsername.isNotEmpty
+                        ? firstStory.authorUsername
+                        : 'friend';
+
+                    final accent = AppThemes.seedFor(
+                      themeKey: firstStory.authorThemeKey,
+                      themeSeedColor: firstStory.authorThemeSeedColor,
+                    );
+
+                    const isSeen = false;
+
+                    return _StoryAvatar(
+                      label: username,
+                      isCurrentUser: false,
+                      hasStory: true,
+                      isSeen: isSeen,
+                      accentColor: accent,
+                      onTap: () {
+                        if (!context.mounted) return;
+                        Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) => StoryViewerScreen(
+                              stories: userStories,
+                            ),
+                          ),
+                        );
+                      },
+                    );
+                  },
+                  separatorBuilder: (_, __) => const SizedBox(width: 12),
+                  // 1 for "You" + number of users with stories.
+                  itemCount: 1 + userIds.length,
+                );
               }
 
               // Logged in: hide stories from users I blocked AND users who
@@ -1087,12 +1120,9 @@ class _StoriesRowState extends State<_StoriesRow> {
                       .where((id) => id != me.id)
                       .toList();
 
-                  return StreamBuilder<AppUser?>(
-                    stream: AuthService.instance.userChanges,
-                    builder: (context, meSnap) {
-                      final meProfile = meSnap.data;
+                  final meProfile = AuthService.instance.currentUser;
 
-                      return ListView.separated(
+                  return ListView.separated(
                         scrollDirection: Axis.horizontal,
                         padding: const EdgeInsets.symmetric(
                             horizontal: 12, vertical: 8),
@@ -1148,15 +1178,40 @@ class _StoriesRowState extends State<_StoriesRow> {
                                   hasStory: hasStories,
                                   isSeen: allSeen,
                                   photoUrl: meProfile?.photoUrl,
+                                  accentColor: meProfile == null
+                                      ? null
+                                      : AppThemes.seedFor(
+                                          themeKey: meProfile.themeKey,
+                                          themeSeedColor:
+                                              meProfile.themeSeedColor,
+                                        ),
                                   onTap: () {
                                     if (!context.mounted) return;
                                     if (!hasStories) {
-                                      Navigator.of(context).push(
+                                      Navigator.of(context)
+                                          .push<bool>(
                                         MaterialPageRoute(
                                           builder: (_) =>
                                               const CreateStoryScreen(),
                                         ),
-                                      );
+                                      )
+                                          .then((created) async {
+                                        if (created != true) return;
+                                        final me = AuthService.instance.currentUser;
+                                        if (me == null) return;
+                                        final stories = await StoryService
+                                            .instance
+                                            .getUserStoriesOnce(authorId: me.id);
+                                        if (!context.mounted) return;
+                                        if (stories.isEmpty) return;
+                                        Navigator.of(context).push(
+                                          MaterialPageRoute(
+                                            builder: (_) => StoryViewerScreen(
+                                              stories: stories,
+                                            ),
+                                          ),
+                                        );
+                                      });
                                     } else {
                                       Navigator.of(context).push(
                                         MaterialPageRoute(
@@ -1169,12 +1224,29 @@ class _StoriesRowState extends State<_StoriesRow> {
                                   },
                                   onLongPress: () {
                                     if (!context.mounted) return;
-                                    Navigator.of(context).push(
+                                    Navigator.of(context)
+                                        .push<bool>(
                                       MaterialPageRoute(
                                         builder: (_) =>
                                             const CreateStoryScreen(),
                                       ),
-                                    );
+                                    )
+                                        .then((created) async {
+                                      if (created != true) return;
+                                      final me = AuthService.instance.currentUser;
+                                      if (me == null) return;
+                                      final stories = await StoryService.instance
+                                          .getUserStoriesOnce(authorId: me.id);
+                                      if (!context.mounted) return;
+                                      if (stories.isEmpty) return;
+                                      Navigator.of(context).push(
+                                        MaterialPageRoute(
+                                          builder: (_) => StoryViewerScreen(
+                                            stories: stories,
+                                          ),
+                                        ),
+                                      );
+                                    });
                                   },
                                 );
                               },
@@ -1203,6 +1275,11 @@ class _StoriesRowState extends State<_StoriesRow> {
                               ? firstStory.authorUsername
                               : 'friend';
 
+                          final accent = AppThemes.seedFor(
+                            themeKey: firstStory.authorThemeKey,
+                            themeSeedColor: firstStory.authorThemeSeedColor,
+                          );
+
                           final isSeen = sortedStories.every(
                             (s) => s.seenBy.contains(me.id),
                           );
@@ -1212,6 +1289,7 @@ class _StoriesRowState extends State<_StoriesRow> {
                             isCurrentUser: false,
                             hasStory: true,
                             isSeen: isSeen,
+                            accentColor: accent,
                             onTap: () {
                               if (!context.mounted) return;
                               Navigator.of(context).push(
@@ -1228,8 +1306,6 @@ class _StoriesRowState extends State<_StoriesRow> {
                         // 1 for "You" + number of users with stories.
                         itemCount: 1 + userIds.length,
                       );
-                    },
-                  );
                 },
               );
             },
@@ -1246,6 +1322,7 @@ class _StoryAvatar extends StatelessWidget {
   final bool hasStory;
   final bool isSeen;
   final String? photoUrl;
+  final Color? accentColor;
   final VoidCallback? onTap;
   final VoidCallback? onLongPress;
 
@@ -1255,6 +1332,7 @@ class _StoryAvatar extends StatelessWidget {
     this.hasStory = false,
     this.isSeen = false,
     this.photoUrl,
+    this.accentColor,
     this.onTap,
     this.onLongPress,
   });
@@ -1262,9 +1340,8 @@ class _StoryAvatar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final baseColor = isCurrentUser
-        ? theme.colorScheme.primary
-        : theme.colorScheme.secondary;
+    final baseColor = accentColor ??
+        (isCurrentUser ? theme.colorScheme.primary : theme.colorScheme.secondary);
     final borderColor = hasStory
         ? (isSeen
             ? baseColor.withOpacity(0.4)

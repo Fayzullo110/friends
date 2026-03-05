@@ -65,6 +65,34 @@ class AuthService {
     _userController.add(_currentUser);
   }
 
+  Future<void> refreshMe() async {
+    if (_currentUser == null) return;
+    await _loadMe();
+  }
+
+  Future<void> updateTheme({
+    required String? themeKey,
+    required int? themeSeedColor,
+  }) async {
+    if (_currentUser == null) return;
+
+    await _api.patchNoContent(
+      '/api/users/me',
+      body: {
+        'themeKey': themeKey,
+        'themeSeedColor': themeSeedColor,
+      },
+    );
+
+    _currentUser = _currentUser!.copyWith(
+      themeKey: themeKey,
+      themeSeedColor: themeSeedColor,
+    );
+    _userController.add(_currentUser);
+
+    await refreshMe();
+  }
+
   Future<bool> isUsernameAvailable(String username) async {
     final u = username.trim();
     if (u.isEmpty) return false;

@@ -7,6 +7,8 @@ public class StoryResponse {
   public long id;
   public long authorId;
   public String authorUsername;
+  public String authorThemeKey;
+  public Integer authorThemeSeedColor;
   public String mediaUrl;
   public String mediaType;
   public String text;
@@ -22,6 +24,8 @@ public class StoryResponse {
       long id,
       long authorId,
       String authorUsername,
+      String authorThemeKey,
+      Integer authorThemeSeedColor,
       String mediaUrl,
       String mediaType,
       String text,
@@ -35,6 +39,8 @@ public class StoryResponse {
     this.id = id;
     this.authorId = authorId;
     this.authorUsername = authorUsername;
+    this.authorThemeKey = authorThemeKey;
+    this.authorThemeSeedColor = authorThemeSeedColor;
     this.mediaUrl = mediaUrl;
     this.mediaType = mediaType;
     this.text = text;

@@ -78,14 +78,17 @@ public class StoryCommentController {
   }
 
   private StoryCommentResponse toResponse(StoryCommentEntity c) {
-    final String authorUsername = userRepository.findById(c.getAuthorId())
-        .map(UserEntity::getUsername)
-        .orElse("user");
+    final UserEntity author = userRepository.findById(c.getAuthorId()).orElse(null);
+    final String authorUsername = author == null ? "user" : author.getUsername();
+    final String authorThemeKey = author == null ? null : author.getThemeKey();
+    final Integer authorThemeSeedColor = author == null ? null : author.getThemeSeedColor();
     return new StoryCommentResponse(
         c.getId(),
         c.getStoryId(),
         c.getAuthorId(),
         authorUsername,
+        authorThemeKey,
+        authorThemeSeedColor,
         c.getText(),
         c.getCreatedAt());
   }

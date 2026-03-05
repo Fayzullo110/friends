@@ -2,6 +2,8 @@ class Story {
   final String id;
   final String authorId;
   final String authorUsername;
+  final String? authorThemeKey;
+  final int? authorThemeSeedColor;
   final String? mediaUrl; // image / video / gif URL
   final String mediaType; // 'text', 'image', 'video', 'gif'
   final String? text;
@@ -17,6 +19,8 @@ class Story {
     required this.id,
     required this.authorId,
     required this.authorUsername,
+    this.authorThemeKey,
+    this.authorThemeSeedColor,
     this.mediaUrl,
     required this.mediaType,
     this.text,
@@ -34,6 +38,8 @@ class Story {
       id: data['id'].toString(),
       authorId: data['authorId'].toString(),
       authorUsername: data['authorUsername'] as String? ?? '',
+      authorThemeKey: data['authorThemeKey'] as String?,
+      authorThemeSeedColor: (data['authorThemeSeedColor'] as num?)?.toInt(),
       mediaUrl: data['mediaUrl'] as String?,
       mediaType: data['mediaType'] as String? ?? 'text',
       text: data['text'] as String?,
@@ -62,6 +68,8 @@ class Story {
       'id': id,
       'authorId': authorId,
       'authorUsername': authorUsername,
+      'authorThemeKey': authorThemeKey,
+      'authorThemeSeedColor': authorThemeSeedColor,
       'mediaUrl': mediaUrl,
       'mediaType': mediaType,
       'text': text,

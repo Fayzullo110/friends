@@ -6,6 +6,7 @@ import '../../services/post_service.dart';
 import '../../services/auth_service.dart';
 import '../../services/block_service.dart';
 import '../../widgets/safe_network_image.dart';
+import '../../theme/app_themes.dart';
 
 class UserProfileScreen extends StatefulWidget {
   final AppUser user;
@@ -128,6 +129,10 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final accent = AppThemes.seedFor(
+      themeKey: widget.user.themeKey,
+      themeSeedColor: widget.user.themeSeedColor,
+    );
     final currentUser = AuthService.instance.currentUser;
     final isMe = currentUser != null && currentUser.id == widget.user.id;
 
@@ -136,6 +141,8 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
         title: Text(widget.user.username.isEmpty
             ? 'Profile'
             : '@${widget.user.username}'),
+        backgroundColor: accent.withOpacity(0.06),
+        foregroundColor: theme.colorScheme.onSurface,
       ),
       body: Container(
         decoration: BoxDecoration(
@@ -175,14 +182,12 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                                 shape: BoxShape.circle,
                                 color: theme.colorScheme.surfaceVariant,
                                 border: Border.all(
-                                  color: theme.colorScheme.primary
-                                      .withOpacity(0.4),
+                                  color: accent.withOpacity(0.7),
                                   width: 2,
                                 ),
                               ),
                               child: ClipOval(
-                                child: widget.user.photoUrl != null &&
-                                        widget.user.photoUrl!.trim().isNotEmpty
+                                child: widget.user.photoUrl != null
                                     ? SafeNetworkImage(
                                         url: widget.user.photoUrl,
                                         width: 72,
@@ -192,8 +197,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                                     : Icon(
                                         Icons.person,
                                         size: 32,
-                                        color: theme.colorScheme.onSurface
-                                            .withOpacity(0.8),
+                                        color: accent.withOpacity(0.9),
                                       ),
                               ),
                             ),
@@ -208,6 +212,30 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                           widget.user.username,
                           style: theme.textTheme.titleMedium?.copyWith(
                             fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 4,
+                          ),
+                          decoration: BoxDecoration(
+                            color: accent.withOpacity(0.12),
+                            borderRadius: BorderRadius.circular(999),
+                            border: Border.all(
+                              color: accent.withOpacity(0.35),
+                            ),
+                          ),
+                          child: Text(
+                            AppThemes.labelFor(
+                              themeKey: widget.user.themeKey,
+                              themeSeedColor: widget.user.themeSeedColor,
+                            ),
+                            style: theme.textTheme.labelSmall?.copyWith(
+                              color: accent,
+                              fontWeight: FontWeight.w700,
+                            ),
                           ),
                         ),
                         const SizedBox(height: 2),

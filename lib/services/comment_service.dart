@@ -8,31 +8,25 @@ class CommentService {
 
   static final CommentService instance = CommentService._();
 
+  final Map<String, _CommentsPoller> _postPollers = <String, _CommentsPoller>{};
+  final Map<String, _CommentsPoller> _reelPollers = <String, _CommentsPoller>{};
+
   Stream<List<Comment>> watchComments({required String postId}) {
-    final controller = StreamController<List<Comment>>();
-    List<Comment>? last;
-
-    Future<void> tick() async {
-      try {
-        final rows = await AuthService.instance.api
-            .getListOfMaps('/api/posts/$postId/comments');
-        final next = rows.map(Comment.fromJson).toList();
-        if (last == null || !_commentsEqual(last!, next)) {
-          last = next;
-          controller.add(next);
-        }
-      } catch (_) {
-        // swallow errors
-      }
-    }
-
-    tick();
-    final timer = Timer.periodic(const Duration(seconds: 8), (_) => tick());
-    controller.onCancel = () {
-      timer.cancel();
-      controller.close();
-    };
-    return controller.stream;
+    final key = postId.trim();
+    final poller = _postPollers.putIfAbsent(key, () {
+      return _CommentsPoller(
+        key: key,
+        fetch: () async {
+          final rows = await AuthService.instance.api
+              .getListOfMaps('/api/posts/$key/comments');
+          return rows.map(Comment.fromJson).toList();
+        },
+        onZeroListeners: () {
+          _postPollers.remove(key);
+        },
+      );
+    });
+    return poller.stream;
   }
 
   Future<void> addComment({
@@ -56,30 +50,21 @@ class CommentService {
   }
 
   Stream<List<Comment>> watchReelComments({required String reelId}) {
-    final controller = StreamController<List<Comment>>();
-    List<Comment>? last;
-
-    Future<void> tick() async {
-      try {
-        final rows = await AuthService.instance.api
-            .getListOfMaps('/api/reels/$reelId/comments');
-        final next = rows.map(_reelCommentFromJson).toList();
-        if (last == null || !_commentsEqual(last!, next)) {
-          last = next;
-          controller.add(next);
-        }
-      } catch (_) {
-        // swallow errors
-      }
-    }
-
-    tick();
-    final timer = Timer.periodic(const Duration(seconds: 8), (_) => tick());
-    controller.onCancel = () {
-      timer.cancel();
-      controller.close();
-    };
-    return controller.stream;
+    final key = reelId.trim();
+    final poller = _reelPollers.putIfAbsent(key, () {
+      return _CommentsPoller(
+        key: key,
+        fetch: () async {
+          final rows = await AuthService.instance.api
+              .getListOfMaps('/api/reels/$key/comments');
+          return rows.map(_reelCommentFromJson).toList();
+        },
+        onZeroListeners: () {
+          _reelPollers.remove(key);
+        },
+      );
+    });
+    return poller.stream;
   }
 
   Future<void> addReelComment({
@@ -198,8 +183,66 @@ class CommentService {
     await AuthService.instance.api
         .postNoContent('/api/posts/$postId/comments/$commentId/dislike');
   }
+}
 
-  bool _commentsEqual(List<Comment> a, List<Comment> b) {
+class _CommentsPoller {
+  final String key;
+  final Future<List<Comment>> Function() fetch;
+  final void Function() onZeroListeners;
+
+  _CommentsPoller({
+    required this.key,
+    required this.fetch,
+    required this.onZeroListeners,
+  }) {
+    _controller = StreamController<List<Comment>>.broadcast(
+      onListen: _handleListen,
+      onCancel: _handleCancel,
+    );
+  }
+
+  late final StreamController<List<Comment>> _controller;
+  Timer? _timer;
+  int _listeners = 0;
+  bool _tickInFlight = false;
+  List<Comment>? _last;
+
+  Stream<List<Comment>> get stream => _controller.stream;
+
+  void _handleListen() {
+    _listeners += 1;
+    _timer ??= Timer.periodic(const Duration(seconds: 8), (_) => _tick());
+    _tick();
+  }
+
+  void _handleCancel() {
+    _listeners = (_listeners - 1).clamp(0, 1 << 30);
+    if (_listeners > 0) return;
+    _timer?.cancel();
+    _timer = null;
+    _controller.close();
+    onZeroListeners();
+  }
+
+  Future<void> _tick() async {
+    if (_tickInFlight) return;
+    _tickInFlight = true;
+    try {
+      final next = await fetch();
+      if (_last == null || !_commentsEqualStatic(_last!, next)) {
+        _last = next;
+        if (!_controller.isClosed) {
+          _controller.add(next);
+        }
+      }
+    } catch (_) {
+      // swallow
+    } finally {
+      _tickInFlight = false;
+    }
+  }
+
+  static bool _commentsEqualStatic(List<Comment> a, List<Comment> b) {
     if (identical(a, b)) return true;
     if (a.length != b.length) return false;
     for (var i = 0; i < a.length; i++) {

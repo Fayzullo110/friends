@@ -9,6 +9,8 @@ class Comment {
   final String authorId;
   final String authorUsername;
   final String? authorPhotoUrl;
+  final String? authorThemeKey;
+  final int? authorThemeSeedColor;
   final String text;
   final CommentType type;
   final String? mediaUrl;
@@ -25,6 +27,8 @@ class Comment {
     required this.authorId,
     required this.authorUsername,
     this.authorPhotoUrl,
+    this.authorThemeKey,
+    this.authorThemeSeedColor,
     required this.text,
     required this.type,
     this.mediaUrl,
@@ -43,6 +47,8 @@ class Comment {
       authorId: data['authorId'].toString(),
       authorUsername: data['authorUsername'] as String? ?? '',
       authorPhotoUrl: data['authorPhotoUrl'] as String?,
+      authorThemeKey: data['authorThemeKey'] as String?,
+      authorThemeSeedColor: (data['authorThemeSeedColor'] as num?)?.toInt(),
       text: data['text'] as String? ?? '',
       type: _typeFromString(data['type'] as String?),
       mediaUrl: data['mediaUrl'] as String?,
@@ -68,6 +74,8 @@ class Comment {
       'authorId': authorId,
       'authorUsername': authorUsername,
       'authorPhotoUrl': authorPhotoUrl,
+      'authorThemeKey': authorThemeKey,
+      'authorThemeSeedColor': authorThemeSeedColor,
       'text': text,
       'type': _typeToString(type),
       'mediaUrl': mediaUrl,

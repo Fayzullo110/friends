@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_colorpicker/flutter_colorpicker.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:video_player/video_player.dart';
 
 import '../../models/app_user.dart';
 import '../../services/auth_service.dart';
 import '../../theme/ios_icons.dart';
+import '../../theme/app_themes.dart';
 import '../../widgets/safe_network_image.dart';
 import '../chat/gif_picker_sheet.dart';
 
@@ -25,6 +27,8 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   late final TextEditingController _bioController;
   String? _photoUrl;
   String? _backgroundImageUrl;
+  String? _themeKey;
+  int? _themeSeedColor;
   bool _isSaving = false;
   bool _uploadingAvatar = false;
   bool _uploadingBackground = false;
@@ -45,6 +49,88 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     _bioController = TextEditingController(text: widget.user.bio ?? '');
     _photoUrl = widget.user.photoUrl;
     _backgroundImageUrl = widget.user.backgroundImageUrl;
+    _themeKey = widget.user.themeKey;
+    _themeSeedColor = widget.user.themeSeedColor;
+  }
+
+  Future<void> _setTheme({required String? key, required int? seedColor}) async {
+    setState(() {
+      _themeKey = key;
+      _themeSeedColor = seedColor;
+    });
+    if (_isSaving || _uploadingAvatar || _uploadingBackground) return;
+    try {
+      setState(() {
+        _isSaving = true;
+      });
+
+      await AuthService.instance.updateTheme(
+        themeKey: key,
+        themeSeedColor: seedColor,
+      );
+
+      if (!mounted) return;
+      setState(() {
+        _themeKey = key;
+        _themeSeedColor = seedColor;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to update theme: $e')),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isSaving = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _pickCustomThemeColor() async {
+    if (_isSaving || _uploadingAvatar || _uploadingBackground) return;
+
+    final initial = (_themeKey == AppThemes.customKey && _themeSeedColor != null)
+        ? Color(_themeSeedColor!)
+        : AppThemes.seedFor(
+            themeKey: _themeKey,
+            themeSeedColor: _themeSeedColor,
+          );
+
+    Color selected = initial;
+
+    final bool? ok = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Pick a theme color'),
+          content: SingleChildScrollView(
+            child: ColorPicker(
+              pickerColor: selected,
+              onColorChanged: (c) {
+                selected = c;
+              },
+              enableAlpha: false,
+              labelTypes: const <ColorLabelType>[],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('Use'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (ok != true) return;
+    await _setTheme(key: AppThemes.customKey, seedColor: selected.value);
   }
 
   @override
@@ -430,6 +516,112 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                   fontWeight: FontWeight.w500,
                 ),
               ),
+            ),
+            const SizedBox(height: 32),
+            // Theme
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                'Theme',
+                style: theme.textTheme.titleSmall?.copyWith(
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 10,
+              runSpacing: 10,
+              children: [
+                for (final p in AppThemes.presets)
+                  ChoiceChip(
+                    label: Text(p.label),
+                    selected: (_themeKey ?? AppThemes.defaultKey) == p.key,
+                    onSelected: (_isSaving || _uploadingAvatar || _uploadingBackground)
+                        ? null
+                        : (_) {
+                            _setTheme(
+                              key: p.key,
+                              seedColor: null,
+                            );
+                          },
+                    avatar: Container(
+                      width: 14,
+                      height: 14,
+                      decoration: BoxDecoration(
+                        color: p.seedColor,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                'Custom',
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.onSurface.withOpacity(0.7),
+                ),
+              ),
+            ),
+            const SizedBox(height: 10),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: OutlinedButton.icon(
+                onPressed: (_isSaving || _uploadingAvatar || _uploadingBackground)
+                    ? null
+                    : _pickCustomThemeColor,
+                icon: const Icon(Icons.color_lens_outlined, size: 18),
+                label: const Text('Pick custom color'),
+              ),
+            ),
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 10,
+              runSpacing: 10,
+              children: [
+                for (final c in const <Color>[
+                  Color(0xFF8D5CF6),
+                  Color(0xFFFE8BCD),
+                  Color(0xFFD4943A),
+                  Color(0xFF22C55E),
+                  Color(0xFF06B6D4),
+                  Color(0xFF111827),
+                ])
+                  GestureDetector(
+                    onTap: (_isSaving || _uploadingAvatar || _uploadingBackground)
+                        ? null
+                        : () {
+                            _setTheme(
+                              key: AppThemes.customKey,
+                              seedColor: c.value,
+                            );
+                          },
+                    child: Container(
+                      width: 38,
+                      height: 38,
+                      decoration: BoxDecoration(
+                        color: c,
+                        shape: BoxShape.circle,
+                        border: Border.all(
+                          color: ((_themeKey == AppThemes.customKey) && _themeSeedColor == c.value)
+                              ? theme.colorScheme.onSurface
+                              : Colors.transparent,
+                          width: 2,
+                        ),
+                      ),
+                      child: ((_themeKey == AppThemes.customKey) && _themeSeedColor == c.value)
+                          ? const Icon(
+                              Icons.check,
+                              color: Colors.white,
+                              size: 18,
+                            )
+                          : null,
+                    ),
+                  ),
+              ],
             ),
             const SizedBox(height: 32),
             // Form fields

@@ -11,9 +11,12 @@ import '../../models/chat.dart';
 import '../../services/chat_service.dart';
 import '../../services/story_service.dart';
 import '../../services/auth_service.dart';
+import '../../services/user_cache_service.dart';
 import '../../theme/ios_icons.dart';
+import '../../theme/app_themes.dart';
 import '../../widgets/safe_network_image.dart';
 import '../chat/video_player_screen.dart';
+import 'create_story_screen.dart';
 
 class StoryViewerScreen extends StatefulWidget {
   final List<Story> stories;
@@ -34,6 +37,17 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
   late final PageController _controller;
   int _currentIndex = 0;
 
+  late List<Story> _stories;
+  bool get _isMine {
+    final me = AuthService.instance.currentUser;
+    if (me == null) return false;
+    if (_stories.isEmpty) return false;
+    return _stories.every((s) => s.authorId == me.id);
+  }
+
+  int get _pageCount => _isMine ? _stories.length + 1 : _stories.length;
+  bool get _isAddPage => _isMine && _currentIndex == _stories.length;
+
   final AudioPlayer _audioPlayer = AudioPlayer();
   String? _currentMusicUrl;
   bool _musicPlaying = false;
@@ -45,12 +59,20 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
 
   static const _autoAdvanceDuration = Duration(seconds: 6);
 
+  late final StreamSubscription<String> _userCacheSub;
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
 
-    if (widget.stories.isEmpty) {
+    _userCacheSub = UserCacheService.instance.updates.listen((_) {
+      if (mounted) setState(() {});
+    });
+
+    _stories = List<Story>.from(widget.stories);
+
+    if (_stories.isEmpty) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
         Navigator.of(context).maybePop();
@@ -63,7 +85,7 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
       return;
     }
 
-    _currentIndex = widget.initialIndex.clamp(0, widget.stories.length - 1);
+    _currentIndex = widget.initialIndex.clamp(0, _stories.length - 1);
     _controller = PageController(initialPage: _currentIndex);
     _progressController = AnimationController(
       vsync: this,
@@ -71,6 +93,7 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
     )..addStatusListener((status) {
         if (status != AnimationStatus.completed) return;
         if (!mounted) return;
+        if (_isAddPage) return;
         _goToNext();
       });
     _playerStateSub = _audioPlayer.playerStateStream.listen((state) {
@@ -87,8 +110,84 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
     _startProgressForIndex(_currentIndex);
   }
 
+  Future<void> _refreshMyStoriesAndJumpToEnd() async {
+    final me = AuthService.instance.currentUser;
+    if (me == null) return;
+    final next = await StoryService.instance.getUserStoriesOnce(authorId: me.id);
+    if (!mounted) return;
+    if (next.isEmpty) return;
+    setState(() {
+      _stories = next;
+      _currentIndex = (_stories.length - 1).clamp(0, _stories.length - 1);
+    });
+    _controller.jumpToPage(_currentIndex);
+    _markSeen(_currentIndex);
+    _loadMusicForIndex(_currentIndex, autoPlay: true);
+    _startProgressForIndex(_currentIndex);
+  }
+
+  Future<void> _openCreateStoryFromViewer() async {
+    _pauseForHold();
+    final created = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(builder: (_) => const CreateStoryScreen()),
+    );
+    if (!mounted) return;
+    if (created == true) {
+      await _refreshMyStoriesAndJumpToEnd();
+    } else {
+      _resumeAfterHold();
+    }
+  }
+
+  Widget _buildAddStoryPage(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      alignment: Alignment.center,
+      padding: const EdgeInsets.all(24),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Container(
+            width: 88,
+            height: 88,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: Colors.white.withOpacity(0.12),
+              border: Border.all(color: Colors.white24),
+            ),
+            child: const Icon(IOSIcons.add, color: Colors.white, size: 40),
+          ),
+          const SizedBox(height: 16),
+          const Text(
+            'Add new story',
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 18,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Swipe here and tap to create another story.',
+            textAlign: TextAlign.center,
+            style: theme.textTheme.bodyMedium?.copyWith(
+              color: Colors.white70,
+            ),
+          ),
+          const SizedBox(height: 18),
+          FilledButton.icon(
+            onPressed: _openCreateStoryFromViewer,
+            icon: const Icon(IOSIcons.add),
+            label: const Text('Create story'),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _showLikes() async {
-    final story = widget.stories[_currentIndex];
+    if (_isAddPage) return;
+    final story = _stories[_currentIndex];
     if (story.likedBy.isEmpty) return;
 
     _pauseForHold();
@@ -117,8 +216,8 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
   }
 
   Future<void> _loadMusicForIndex(int index, {required bool autoPlay}) async {
-    if (index < 0 || index >= widget.stories.length) return;
-    final story = widget.stories[index];
+    if (index < 0 || index >= _stories.length) return;
+    final story = _stories[index];
     final url = story.musicUrl;
 
     // Stop if story has no music.
@@ -194,8 +293,8 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
   Future<void> _markSeen(int index) async {
     final me = AuthService.instance.currentUser;
     if (me == null) return;
-    if (index < 0 || index >= widget.stories.length) return;
-    final story = widget.stories[index];
+    if (index < 0 || index >= _stories.length) return;
+    final story = _stories[index];
     await StoryService.instance.markSeen(
       storyId: story.id,
       userId: me.id,
@@ -209,11 +308,13 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
     _playerStateSub?.cancel();
     _progressController.dispose();
     _audioPlayer.dispose();
+    _userCacheSub.cancel();
     super.dispose();
   }
 
   void _startProgressForIndex(int index) {
-    final story = widget.stories[index];
+    if (index < 0 || index >= _stories.length) return;
+    final story = _stories[index];
     _progressController.stop();
     _progressController.value = 0;
 
@@ -225,7 +326,7 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
   }
 
   void _goToNext() {
-    if (_currentIndex >= widget.stories.length - 1) {
+    if (_currentIndex >= _pageCount - 1) {
       Navigator.of(context).maybePop();
     } else {
       _controller.nextPage(
@@ -322,26 +423,31 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
                   _goToPrevious();
                 } else {
                   // Right: next story
-                  if (_currentIndex < widget.stories.length - 1) {
-                    _goToNext();
-                  } else {
-                    Navigator.of(context).maybePop();
-                  }
+                  _goToNext();
                 }
               },
               child: PageView.builder(
                 controller: _controller,
-                itemCount: widget.stories.length,
+                itemCount: _pageCount,
                 onPageChanged: (index) {
                   setState(() {
                     _currentIndex = index;
                   });
+                  if (_isAddPage) {
+                    _progressController.stop();
+                    _audioPlayer.pause();
+                    _openCreateStoryFromViewer();
+                    return;
+                  }
                   _markSeen(index);
                   _loadMusicForIndex(index, autoPlay: true);
                   _startProgressForIndex(index);
                 },
                 itemBuilder: (context, index) {
-                  final story = widget.stories[index];
+                  if (_isMine && index == _stories.length) {
+                    return _buildAddStoryPage(context);
+                  }
+                  final story = _stories[index];
                   return _buildStoryPage(context, story);
                 },
               ),
@@ -361,7 +467,7 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
                           animation: _progressController,
                           builder: (context, _) {
                             return Row(
-                              children: List.generate(widget.stories.length, (i) {
+                              children: List.generate(_stories.length, (i) {
                                 final double value =
                                     i < _currentIndex ? 1.0 : (i == _currentIndex ? _progressController.value : 0.0);
                                 return Expanded(
@@ -416,7 +522,41 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
   }
 
   Widget _buildHeaderInfo() {
-    final story = widget.stories[_currentIndex];
+    if (_isAddPage) {
+      return Row(
+        children: const [
+          CircleAvatar(
+            radius: 16,
+            backgroundColor: Colors.white24,
+            child: Icon(
+              IOSIcons.add,
+              size: 18,
+              color: Colors.white,
+            ),
+          ),
+          SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              'Add to your story',
+              style: TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w600,
+              ),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ],
+      );
+    }
+
+    final story = _stories[_currentIndex];
+    UserCacheService.instance.get(story.authorId);
+    final author = UserCacheService.instance.peek(story.authorId);
+    final authorAccent = AppThemes.seedFor(
+      themeKey: author?.themeKey ?? story.authorThemeKey,
+      themeSeedColor: author?.themeSeedColor ?? story.authorThemeSeedColor,
+    );
+    final authorPhotoUrl = author?.photoUrl;
     final username = story.authorUsername.isNotEmpty
         ? story.authorUsername
         : 'Story';
@@ -424,13 +564,33 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
 
     return Row(
       children: [
-        const CircleAvatar(
-          radius: 16,
-          backgroundColor: Colors.white24,
-          child: Icon(
-            IOSIcons.person,
-            size: 18,
-            color: Colors.white,
+        Container(
+          width: 32,
+          height: 32,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            border: Border.all(
+              color: authorAccent.withOpacity(0.75),
+              width: 2,
+            ),
+          ),
+          child: CircleAvatar(
+            radius: 16,
+            backgroundColor: Colors.white24,
+            child: ClipOval(
+              child: (authorPhotoUrl != null && authorPhotoUrl.trim().isNotEmpty)
+                  ? SafeNetworkImage(
+                      url: authorPhotoUrl,
+                      width: 32,
+                      height: 32,
+                      fit: BoxFit.cover,
+                    )
+                  : Icon(
+                      IOSIcons.person,
+                      size: 18,
+                      color: authorAccent,
+                    ),
+            ),
           ),
         ),
         const SizedBox(width: 8),
@@ -926,15 +1086,30 @@ class _StoryCommentsSheetState extends State<_StoryCommentsSheet> {
                     itemCount: comments.length,
                     itemBuilder: (context, index) {
                       final c = comments[index];
+                      final accent = AppThemes.seedFor(
+                        themeKey: c.authorThemeKey,
+                        themeSeedColor: c.authorThemeSeedColor,
+                      );
                       return ListTile(
                         leading: CircleAvatar(
+                          backgroundColor: accent.withOpacity(0.12),
                           child: Text(
                             c.authorUsername.isNotEmpty
                                 ? c.authorUsername[0].toUpperCase()
                                 : '?',
+                            style: TextStyle(
+                              color: accent,
+                              fontWeight: FontWeight.w700,
+                            ),
                           ),
                         ),
-                        title: Text(c.authorUsername),
+                        title: Text(
+                          c.authorUsername,
+                          style: TextStyle(
+                            color: accent,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
                         subtitle: Text(c.text),
                         trailing: Text(
                           _formatTimeAgo(c.createdAt),

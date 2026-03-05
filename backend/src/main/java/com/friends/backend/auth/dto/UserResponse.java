@@ -10,6 +10,8 @@ public class UserResponse {
   public String photoUrl;
   public String bio;
   public String backgroundImageUrl;
+  public String themeKey;
+  public Integer themeSeedColor;
   public boolean isOnline;
   public String lastActiveAt;
 
@@ -23,6 +25,8 @@ public class UserResponse {
       String photoUrl,
       String bio,
       String backgroundImageUrl,
+      String themeKey,
+      Integer themeSeedColor,
       boolean isOnline,
       String lastActiveAt) {
     this.id = id;
@@ -34,6 +38,8 @@ public class UserResponse {
     this.photoUrl = photoUrl;
     this.bio = bio;
     this.backgroundImageUrl = backgroundImageUrl;
+    this.themeKey = themeKey;
+    this.themeSeedColor = themeSeedColor;
     this.isOnline = isOnline;
     this.lastActiveAt = lastActiveAt;
   }

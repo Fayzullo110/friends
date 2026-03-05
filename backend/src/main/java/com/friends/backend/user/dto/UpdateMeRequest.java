@@ -12,4 +12,8 @@ public class UpdateMeRequest {
   public String photoUrl;
 
   public String backgroundImageUrl;
+
+  public String themeKey;
+
+  public Integer themeSeedColor;
 }

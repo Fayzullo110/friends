@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
+import 'package:provider/provider.dart';
 import 'features/auth/auth_gate.dart';
 import 'l10n/app_localizations.dart';
 import 'services/auth_service.dart';
+import 'theme/theme_controller.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -18,48 +20,30 @@ class FriendsApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final ColorScheme lightScheme = ColorScheme.fromSeed(
-      seedColor: Colors.blueAccent,
-      brightness: Brightness.light,
-    );
-    const ColorScheme darkScheme = ColorScheme.dark(
-      primary: Colors.white,
-      onPrimary: Colors.black,
-      secondary: Colors.white70,
-      onSecondary: Colors.black,
-      surface: Color(0xFF121212),
-      onSurface: Colors.white,
-      background: Colors.black,
-      onBackground: Colors.white,
-      error: Color(0xFFCF6679),
-      onError: Colors.black,
-    );
-
-    return MaterialApp(
-      onGenerateTitle: (context) => AppLocalizations.of(context)!.appTitle,
-      debugShowCheckedModeBanner: false,
-      localizationsDelegates: const [
-        AppLocalizations.delegate,
-        GlobalMaterialLocalizations.delegate,
-        GlobalWidgetsLocalizations.delegate,
-        GlobalCupertinoLocalizations.delegate,
-      ],
-      supportedLocales: const [
-        Locale('en'),
-        Locale('uz'),
-      ],
-      themeMode: ThemeMode.system,
-      theme: ThemeData(
-        colorScheme: lightScheme,
-        useMaterial3: true,
-        scaffoldBackgroundColor: Colors.grey.shade100,
+    return ChangeNotifierProvider(
+      create: (_) => ThemeController(authService: AuthService.instance),
+      child: Consumer<ThemeController>(
+        builder: (context, themeController, _) {
+          return MaterialApp(
+            onGenerateTitle: (context) => AppLocalizations.of(context)!.appTitle,
+            debugShowCheckedModeBanner: false,
+            localizationsDelegates: const [
+              AppLocalizations.delegate,
+              GlobalMaterialLocalizations.delegate,
+              GlobalWidgetsLocalizations.delegate,
+              GlobalCupertinoLocalizations.delegate,
+            ],
+            supportedLocales: const [
+              Locale('en'),
+              Locale('uz'),
+            ],
+            themeMode: ThemeMode.system,
+            theme: themeController.lightTheme,
+            darkTheme: themeController.darkTheme,
+            home: const AuthGate(),
+          );
+        },
       ),
-      darkTheme: ThemeData(
-        colorScheme: darkScheme,
-        useMaterial3: true,
-        scaffoldBackgroundColor: Colors.black,
-      ),
-      home: const AuthGate(),
     );
   }
 }

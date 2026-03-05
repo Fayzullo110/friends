@@ -76,6 +76,8 @@ public class AuthService {
         user.getPhotoUrl(),
         user.getBio(),
         user.getBackgroundImageUrl(),
+        user.getThemeKey(),
+        user.getThemeSeedColor(),
         Boolean.TRUE.equals(user.getIsOnline()),
         user.getLastActiveAt() == null ? null : user.getLastActiveAt().toString());
   }

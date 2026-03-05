@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:record/record.dart';
@@ -5,13 +6,14 @@ import 'package:path_provider/path_provider.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../../models/chat_message.dart';
-import '../../models/app_user.dart';
 import '../../models/story.dart';
 import '../../services/chat_service.dart';
 import '../../services/video_call_service.dart';
 import '../../services/auth_service.dart';
+import '../../services/user_cache_service.dart';
 import '../../services/story_service.dart';
 import '../../theme/ios_icons.dart';
+import '../../theme/app_themes.dart';
 import '../../widgets/safe_network_image.dart';
 import '../story/story_viewer_screen.dart';
 import 'jitsi_call_screen.dart';
@@ -50,8 +52,7 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
   bool _hasText = false;
   bool _isSending = false;
 
-  String? _directOtherUserIdForFuture;
-  Future<AppUser>? _directOtherUserFuture;
+  late final StreamSubscription<String> _userCacheSub;
 
   static const int _pageSize = 50;
   int _olderOffset = _pageSize;
@@ -65,6 +66,7 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
     _controller.dispose();
     _voiceRecorder.dispose();
     _messagesScrollController.dispose();
+    _userCacheSub.cancel();
     super.dispose();
   }
 
@@ -72,6 +74,9 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
   void initState() {
     super.initState();
     _messagesScrollController.addListener(_maybeLoadOlder);
+    _userCacheSub = UserCacheService.instance.updates.listen((_) {
+      if (mounted) setState(() {});
+    });
   }
 
   void _maybeLoadOlder() {
@@ -173,12 +178,8 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
     final appBarFg = isDark ? theme.appBarTheme.foregroundColor : Colors.black;
 
     final String? directOtherId = widget.otherUserId;
-    if (directOtherId != null && _directOtherUserIdForFuture != directOtherId) {
-      _directOtherUserIdForFuture = directOtherId;
-      _directOtherUserFuture = AuthService.instance.api.getJson(
-        '/api/users/$directOtherId',
-        (json) => AppUser.fromJson(json),
-      );
+    if (directOtherId != null) {
+      UserCacheService.instance.get(directOtherId);
     }
 
     return Scaffold(
@@ -215,79 +216,74 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
                       ? stories.every((s) => s.seenBy.contains(currentUserId))
                       : false;
 
-                  return FutureBuilder<AppUser>(
-                    future: _directOtherUserFuture,
-                    builder: (context, snap) {
-                      final u = snap.data;
-                      final photoUrl = u?.photoUrl;
+                  final u = UserCacheService.instance.peek(directOtherId);
+                  final photoUrl = u?.photoUrl;
+                  final accent = AppThemes.seedFor(
+                    themeKey: u?.themeKey,
+                    themeSeedColor: u?.themeSeedColor,
+                  );
 
-                      final avatar = CircleAvatar(
-                        radius: 18,
-                        backgroundColor:
-                            theme.colorScheme.primary.withOpacity(0.12),
-                        child: ClipOval(
-                          child: (photoUrl != null &&
-                                  photoUrl.trim().isNotEmpty)
-                              ? SafeNetworkImage(
-                                  url: photoUrl,
-                                  width: 36,
-                                  height: 36,
-                                  fit: BoxFit.cover,
-                                )
-                              : Center(
-                                  child: Text(
-                                    widget.title.isNotEmpty
-                                        ? widget.title
-                                            .substring(0, 1)
-                                            .toUpperCase()
-                                        : 'C',
-                                    style: TextStyle(
-                                      color: theme.colorScheme.primary,
-                                      fontWeight: FontWeight.w700,
-                                    ),
-                                  ),
-                                ),
-                        ),
-                      );
-
-                      final decorated = hasStory
-                          ? Container(
-                              padding: const EdgeInsets.all(2),
-                              decoration: BoxDecoration(
-                                shape: BoxShape.circle,
-                                gradient: LinearGradient(
-                                  colors: allSeen
-                                      ? <Color>[
-                                          theme.colorScheme.onSurface
-                                              .withOpacity(0.25),
-                                          theme.colorScheme.onSurface
-                                              .withOpacity(0.10),
-                                        ]
-                                      : const <Color>[
-                                          Color(0xFFFE8BCD),
-                                          Color(0xFF8D5CF6),
-                                        ],
+                  final avatar = CircleAvatar(
+                    radius: 18,
+                    backgroundColor: accent.withOpacity(0.12),
+                    child: ClipOval(
+                      child: (photoUrl != null && photoUrl.trim().isNotEmpty)
+                          ? SafeNetworkImage(
+                              url: photoUrl,
+                              width: 36,
+                              height: 36,
+                              fit: BoxFit.cover,
+                            )
+                          : Center(
+                              child: Text(
+                                widget.title.isNotEmpty
+                                    ? widget.title.substring(0, 1).toUpperCase()
+                                    : 'C',
+                                style: TextStyle(
+                                  color: accent,
+                                  fontWeight: FontWeight.w700,
                                 ),
                               ),
-                              child: avatar,
-                            )
-                          : avatar;
+                            ),
+                    ),
+                  );
 
-                      return GestureDetector(
-                        onTap: hasStory
-                            ? () {
-                                Navigator.of(context).push(
-                                  MaterialPageRoute(
-                                    builder: (_) => StoryViewerScreen(
-                                      stories: List<Story>.from(stories),
-                                    ),
-                                  ),
-                                );
-                              }
-                            : null,
-                        child: decorated,
-                      );
-                    },
+                  final decorated = hasStory
+                      ? Container(
+                          padding: const EdgeInsets.all(2),
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            gradient: LinearGradient(
+                              colors: allSeen
+                                  ? <Color>[
+                                      theme.colorScheme.onSurface
+                                          .withOpacity(0.25),
+                                      theme.colorScheme.onSurface
+                                          .withOpacity(0.10),
+                                    ]
+                                  : <Color>[
+                                      accent.withOpacity(0.85),
+                                      accent.withOpacity(0.45),
+                                    ],
+                            ),
+                          ),
+                          child: avatar,
+                        )
+                      : avatar;
+
+                  return GestureDetector(
+                    onTap: hasStory
+                        ? () {
+                            Navigator.of(context).push(
+                              MaterialPageRoute(
+                                builder: (_) => StoryViewerScreen(
+                                  stories: List<Story>.from(stories),
+                                ),
+                              ),
+                            );
+                          }
+                        : null,
+                    child: decorated,
                   );
                 },
               ),

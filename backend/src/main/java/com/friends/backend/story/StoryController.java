@@ -92,9 +92,10 @@ public class StoryController {
   }
 
   private StoryResponse toResponse(StoryEntity s) {
-    final String authorUsername = userRepository.findById(s.getAuthorId())
-        .map(UserEntity::getUsername)
-        .orElse("user");
+    final UserEntity author = userRepository.findById(s.getAuthorId()).orElse(null);
+    final String authorUsername = author == null ? "user" : author.getUsername();
+    final String authorThemeKey = author == null ? null : author.getThemeKey();
+    final Integer authorThemeSeedColor = author == null ? null : author.getThemeSeedColor();
 
     final List<Long> seenBy = storySeenRepository.findUserIdsWhoSaw(s.getId());
 
@@ -104,6 +105,8 @@ public class StoryController {
         s.getId(),
         s.getAuthorId(),
         authorUsername,
+        authorThemeKey,
+        authorThemeSeedColor,
         s.getMediaUrl(),
         s.getMediaType(),
         s.getText(),
