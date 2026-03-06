@@ -11,6 +11,7 @@ import 'archived_posts_screen.dart';
 import 'archived_reels_screen.dart';
 import 'follow_requests_screen.dart';
 import 'theme_presets_screen.dart';
+import 'admin_badges_screen.dart';
 
 class SettingsScreen extends StatelessWidget {
   const SettingsScreen({super.key});
@@ -222,6 +223,19 @@ class SettingsScreen extends StatelessWidget {
                       content: Text(
                         'For now, please send feedback through the app store or repo.',
                       ),
+                    ),
+                  );
+                },
+              ),
+              const Divider(height: 1),
+              ListTile(
+                leading: const Icon(IOSIcons.shield),
+                title: const Text('Admin tools'),
+                subtitle: const Text('Badges and verification'),
+                onTap: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => const AdminBadgesScreen(),
                     ),
                   );
                 },
