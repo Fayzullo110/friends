@@ -13,6 +13,8 @@ import '../../services/video_call_service.dart';
 import '../../services/auth_service.dart';
 import '../../services/user_cache_service.dart';
 import '../../services/story_service.dart';
+import '../../services/mute_service.dart';
+import '../../services/report_service.dart';
 import '../../theme/ios_icons.dart';
 import '../../theme/app_themes.dart';
 import '../../widgets/safe_network_image.dart';
@@ -113,6 +115,10 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
   ChatMessage? _replyTo;
   Chat? _chat;
   bool _isUpdatingPin = false;
+
+  bool _loadingMuteState = false;
+  bool _isMuted = false;
+  bool _didLoadMuteState = false;
 
   late final StreamSubscription<String> _userCacheSub;
 
@@ -217,6 +223,80 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
                         icon: const Icon(IOSIcons.handThumbsup, size: 18),
                         label: const Text('React'),
                       ),
+                      TextButton.icon(
+                        onPressed: () async {
+                          Navigator.of(ctx).pop();
+
+                          final me = AuthService.instance.currentUser;
+                          if (me == null) {
+                            if (!mounted) return;
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(content: Text('Please log in to report messages.')),
+                            );
+                            return;
+                          }
+
+                          final reasonController = TextEditingController();
+                          final detailsController = TextEditingController();
+                          final confirm = await showDialog<bool>(
+                            context: context,
+                            builder: (context) {
+                              return AlertDialog(
+                                title: const Text('Report message'),
+                                content: Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    TextField(
+                                      controller: reasonController,
+                                      decoration: const InputDecoration(labelText: 'Reason'),
+                                    ),
+                                    TextField(
+                                      controller: detailsController,
+                                      decoration: const InputDecoration(labelText: 'Details (optional)'),
+                                      maxLines: 3,
+                                    ),
+                                  ],
+                                ),
+                                actions: [
+                                  TextButton(
+                                    onPressed: () => Navigator.of(context).pop(false),
+                                    child: const Text('Cancel'),
+                                  ),
+                                  FilledButton(
+                                    onPressed: () => Navigator.of(context).pop(true),
+                                    child: const Text('Report'),
+                                  ),
+                                ],
+                              );
+                            },
+                          );
+
+                          if (confirm != true) return;
+                          final reason = reasonController.text.trim();
+                          final details = detailsController.text.trim();
+                          if (reason.isEmpty) {
+                            if (!mounted) return;
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(content: Text('Reason is required.')),
+                            );
+                            return;
+                          }
+
+                          await ReportService.instance.report(
+                            targetType: 'message',
+                            targetId: message.id,
+                            reason: reason,
+                            details: details.isEmpty ? null : details,
+                          );
+
+                          if (!mounted) return;
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(content: Text('Report submitted.')),
+                          );
+                        },
+                        icon: const Icon(IOSIcons.flag, size: 18),
+                        label: const Text('Report'),
+                      ),
                     ],
                   ),
                 ),
@@ -237,6 +317,117 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
     });
 
     _refreshChat();
+
+    if (widget.otherUserId != null) {
+      _loadMuteState();
+      _didLoadMuteState = true;
+    }
+  }
+
+  Future<void> _loadMuteState() async {
+    final currentUserId = AuthService.instance.currentUser?.id;
+    final otherId = widget.otherUserId;
+    if (currentUserId == null || otherId == null) return;
+
+    setState(() {
+      _loadingMuteState = true;
+    });
+    try {
+      final muted = await MuteService.instance.isMuted(toUserId: otherId);
+      if (!mounted) return;
+      setState(() {
+        _isMuted = muted;
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _loadingMuteState = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _toggleMuteOther() async {
+    final me = AuthService.instance.currentUser;
+    final otherId = widget.otherUserId;
+    if (me == null || otherId == null) return;
+    if (_isMuted) {
+      await MuteService.instance.unmute(fromUserId: me.id, toUserId: otherId);
+      if (!mounted) return;
+      setState(() {
+        _isMuted = false;
+      });
+      return;
+    }
+    await MuteService.instance.mute(fromUserId: me.id, toUserId: otherId);
+    if (!mounted) return;
+    setState(() {
+      _isMuted = true;
+    });
+  }
+
+  Future<void> _reportOtherUser() async {
+    final me = AuthService.instance.currentUser;
+    final otherId = widget.otherUserId;
+    if (me == null || otherId == null) return;
+
+    final reasonController = TextEditingController();
+    final detailsController = TextEditingController();
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Report user'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: reasonController,
+                decoration: const InputDecoration(labelText: 'Reason'),
+              ),
+              TextField(
+                controller: detailsController,
+                decoration: const InputDecoration(labelText: 'Details (optional)'),
+                maxLines: 3,
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('Report'),
+            ),
+          ],
+        );
+      },
+    );
+    if (confirm != true) return;
+
+    final reason = reasonController.text.trim();
+    final details = detailsController.text.trim();
+    if (reason.isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Reason is required.')),
+      );
+      return;
+    }
+
+    await ReportService.instance.report(
+      targetType: 'user',
+      targetId: otherId,
+      reason: reason,
+      details: details.isEmpty ? null : details,
+    );
+
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Report submitted.')),
+    );
   }
 
   Future<void> _refreshChat() async {
@@ -352,6 +543,11 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
     final String? directOtherId = widget.otherUserId;
     if (directOtherId != null) {
       UserCacheService.instance.get(directOtherId);
+    }
+
+    if (directOtherId != null && !_didLoadMuteState) {
+      _didLoadMuteState = true;
+      _loadMuteState();
     }
 
     return Scaffold(
@@ -545,11 +741,45 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
             icon: const Icon(IOSIcons.videoCam),
             tooltip: 'Video call',
           ),
-          IconButton(
-            onPressed: () {},
-            icon: const Icon(IOSIcons.moreVert),
-            tooltip: 'More',
-          ),
+          if (directOtherId != null)
+            PopupMenuButton<String>(
+              icon: const Icon(IOSIcons.moreVert),
+              onSelected: (v) async {
+                if (v == 'mute') {
+                  await _toggleMuteOther();
+                } else if (v == 'report') {
+                  await _reportOtherUser();
+                }
+              },
+              itemBuilder: (context) {
+                final muteLabel = _loadingMuteState
+                    ? 'Mute'
+                    : (_isMuted ? 'Unmute' : 'Mute');
+                return [
+                  PopupMenuItem(
+                    value: 'mute',
+                    enabled: !_loadingMuteState,
+                    child: Row(
+                      children: [
+                        const Icon(IOSIcons.volumeOff, size: 18),
+                        const SizedBox(width: 8),
+                        Text(muteLabel),
+                      ],
+                    ),
+                  ),
+                  const PopupMenuItem(
+                    value: 'report',
+                    child: Row(
+                      children: [
+                        Icon(IOSIcons.flag, size: 18),
+                        SizedBox(width: 8),
+                        Text('Report'),
+                      ],
+                    ),
+                  ),
+                ];
+              },
+            ),
         ],
       ),
       body: Column(

@@ -60,6 +60,12 @@ public class UserEntity {
   @Column(name = "comment_policy", nullable = false)
   private String commentPolicy = "everyone";
 
+  @Column(name = "is_official", nullable = false)
+  private Boolean isOfficial = false;
+
+  @Column(name = "badge_type", length = 32)
+  private String badgeType;
+
   @PrePersist
   void onCreate() {
     final Instant now = Instant.now();
@@ -194,5 +200,21 @@ public class UserEntity {
 
   public void setCommentPolicy(String commentPolicy) {
     this.commentPolicy = commentPolicy;
+  }
+
+  public Boolean getIsOfficial() {
+    return isOfficial;
+  }
+
+  public void setIsOfficial(Boolean isOfficial) {
+    this.isOfficial = isOfficial;
+  }
+
+  public String getBadgeType() {
+    return badgeType;
+  }
+
+  public void setBadgeType(String badgeType) {
+    this.badgeType = badgeType;
   }
 }

@@ -6,6 +6,8 @@ import '../../services/auth_service.dart';
 import '../../services/chat_service.dart';
 import '../chat/chat_detail_screen.dart';
 import 'friend_requests_screen.dart';
+import 'suggested_friends_screen.dart';
+import 'close_friends_screen.dart';
 
 class FriendsScreen extends StatelessWidget {
   const FriendsScreen({super.key});
@@ -25,6 +27,28 @@ class FriendsScreen extends StatelessWidget {
       appBar: AppBar(
         title: const Text('Friends'),
         actions: [
+          IconButton(
+            tooltip: 'Suggested friends',
+            icon: const Icon(Icons.explore_outlined),
+            onPressed: () {
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => const SuggestedFriendsScreen(),
+                ),
+              );
+            },
+          ),
+          IconButton(
+            tooltip: 'Close friends',
+            icon: const Icon(Icons.star_border),
+            onPressed: () {
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => const CloseFriendsScreen(),
+                ),
+              );
+            },
+          ),
           IconButton(
             tooltip: 'Friend requests',
             icon: const Icon(Icons.person_add),

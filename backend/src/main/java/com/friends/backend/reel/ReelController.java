@@ -1,19 +1,30 @@
 package com.friends.backend.reel;
 
+import com.friends.backend.block.UserBlockRepository;
+import com.friends.backend.common.TrustSafetyUtils;
+import com.friends.backend.follow.UserFollowRepository;
 import com.friends.backend.reel.dto.CreateReelRequest;
 import com.friends.backend.reel.dto.ReelResponse;
 import com.friends.backend.reel.dto.UpdateReelRequest;
 import com.friends.backend.common.PagedResponse;
+import com.friends.backend.mute.UserMuteRepository;
 import com.friends.backend.security.UserPrincipal;
 import com.friends.backend.user.UserEntity;
 import com.friends.backend.user.UserRepository;
 import jakarta.validation.Valid;
 import java.time.Instant;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
+import java.util.stream.Collectors;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.server.ResponseStatusException;
 
 @RestController
 @RequestMapping("/api/reels")
@@ -22,48 +33,122 @@ public class ReelController {
   private final ReelLikeRepository reelLikeRepository;
   private final UserRepository userRepository;
 
-  public ReelController(ReelRepository reelRepository, ReelLikeRepository reelLikeRepository, UserRepository userRepository) {
+  private final UserMuteRepository userMuteRepository;
+  private final UserBlockRepository userBlockRepository;
+  private final UserFollowRepository userFollowRepository;
+
+  public ReelController(
+      ReelRepository reelRepository,
+      ReelLikeRepository reelLikeRepository,
+      UserRepository userRepository,
+      UserMuteRepository userMuteRepository,
+      UserBlockRepository userBlockRepository,
+      UserFollowRepository userFollowRepository) {
     this.reelRepository = reelRepository;
     this.reelLikeRepository = reelLikeRepository;
     this.userRepository = userRepository;
+    this.userMuteRepository = userMuteRepository;
+    this.userBlockRepository = userBlockRepository;
+    this.userFollowRepository = userFollowRepository;
   }
 
   @GetMapping
   public List<ReelResponse> recent(
       @RequestParam(name = "page", defaultValue = "0") int page,
-      @RequestParam(name = "limit", defaultValue = "100") int limit) {
+      @RequestParam(name = "limit", defaultValue = "100") int limit,
+      Authentication authentication) {
     final int safePage = Math.max(0, page);
     final int safeLimit = Math.min(200, Math.max(1, limit));
-    return reelRepository
+
+    final Long meId = TrustSafetyUtils.getUserIdOrNull(authentication);
+    final Set<Long> excluded = TrustSafetyUtils.excludedUserIds(meId, userMuteRepository, userBlockRepository);
+
+    final List<ReelEntity> raw = reelRepository
         .findByArchivedAtIsNullAndDeletedAtIsNullOrderByCreatedAtDesc(PageRequest.of(safePage, safeLimit))
         .stream()
-        .map(this::toResponse)
+        .filter(r -> r.getAuthorId() != null)
         .toList();
+
+    final Set<Long> authorIds = raw.stream().map(ReelEntity::getAuthorId).filter(Objects::nonNull).collect(Collectors.toSet());
+    final Map<Long, UserEntity> usersById = userRepository.findAllById(authorIds).stream()
+        .collect(Collectors.toMap(UserEntity::getId, u -> u));
+    final Set<Long> myFollowingIds = meId == null
+        ? Set.of()
+        : new HashSet<>(userFollowRepository.findFollowingIds(meId));
+
+    final List<ReelEntity> reels = raw.stream()
+        .filter(r -> r.getAuthorId() != null)
+        .filter(r -> !excluded.contains(r.getAuthorId()))
+        .filter(r -> TrustSafetyUtils.canSeePrivateUser(meId, r.getAuthorId(), usersById, myFollowingIds))
+        .toList();
+
+    return reels.stream().map(this::toResponse).toList();
   }
 
   @GetMapping("/paged")
   public PagedResponse<ReelResponse> recentPaged(
       @RequestParam(name = "page", defaultValue = "0") int page,
-      @RequestParam(name = "limit", defaultValue = "100") int limit) {
+      @RequestParam(name = "limit", defaultValue = "100") int limit,
+      Authentication authentication) {
     final int safePage = Math.max(0, page);
     final int safeLimit = Math.min(200, Math.max(1, limit));
 
     final List<ReelEntity> rows = reelRepository
         .findByArchivedAtIsNullAndDeletedAtIsNullOrderByCreatedAtDesc(PageRequest.of(safePage, safeLimit + 1));
-    final boolean hasMore = rows.size() > safeLimit;
-    final List<ReelEntity> pageRows = hasMore ? rows.subList(0, safeLimit) : rows;
+
+    final Long meId = TrustSafetyUtils.getUserIdOrNull(authentication);
+    final Set<Long> excluded = TrustSafetyUtils.excludedUserIds(meId, userMuteRepository, userBlockRepository);
+
+    final Set<Long> authorIds = rows.stream().map(ReelEntity::getAuthorId).filter(Objects::nonNull).collect(Collectors.toSet());
+    final Map<Long, UserEntity> usersById = userRepository.findAllById(authorIds).stream()
+        .collect(Collectors.toMap(UserEntity::getId, u -> u));
+    final Set<Long> myFollowingIds = meId == null
+        ? Set.of()
+        : new HashSet<>(userFollowRepository.findFollowingIds(meId));
+
+    final List<ReelEntity> filtered = rows.stream()
+        .filter(r -> r.getAuthorId() != null)
+        .filter(r -> !excluded.contains(r.getAuthorId()))
+        .filter(r -> TrustSafetyUtils.canSeePrivateUser(meId, r.getAuthorId(), usersById, myFollowingIds))
+        .toList();
+
+    final boolean hasMore = filtered.size() > safeLimit;
+    final List<ReelEntity> pageRows = hasMore ? filtered.subList(0, safeLimit) : filtered;
     final List<ReelResponse> items = pageRows.stream().map(this::toResponse).toList();
 
     return new PagedResponse<>(items, hasMore, hasMore ? safePage + 1 : null, null);
   }
 
   @GetMapping("/{reelId}")
-  public ReelResponse byId(@PathVariable long reelId) {
+  public ReelResponse byId(@PathVariable long reelId, Authentication authentication) {
     final ReelEntity reel = reelRepository.findById(reelId)
-        .orElseThrow(() -> new IllegalArgumentException("Reel not found"));
+        .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Reel not found"));
     if (reel.getDeletedAt() != null) {
-      throw new IllegalArgumentException("Reel is deleted");
+      throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Reel not found");
     }
+
+    final Long meId = TrustSafetyUtils.getUserIdOrNull(authentication);
+    final Set<Long> excluded = TrustSafetyUtils.excludedUserIds(meId, userMuteRepository, userBlockRepository);
+    final Long authorId = reel.getAuthorId();
+    if (authorId == null) {
+      throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Reel not found");
+    }
+    if (excluded.contains(authorId)) {
+      throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Not allowed");
+    }
+
+    final UserEntity author = userRepository.findById(authorId)
+        .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Reel not found"));
+    final boolean isPrivate = Boolean.TRUE.equals(author.getIsPrivateAccount());
+    if (isPrivate) {
+      if (meId == null || meId.longValue() != authorId.longValue()) {
+        final boolean follows = meId != null && userFollowRepository.existsAccepted(meId, authorId);
+        if (!follows) {
+          throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Not allowed");
+        }
+      }
+    }
+
     return toResponse(reel);
   }
 

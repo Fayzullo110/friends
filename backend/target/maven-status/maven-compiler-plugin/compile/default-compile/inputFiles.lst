@@ -36,6 +36,10 @@
 /Users/fayzullotukhtasinov/CascadeProjects/windsurf-project/friends/backend/src/main/java/com/friends/backend/chat/dto/MarkSeenRequest.java
 /Users/fayzullotukhtasinov/CascadeProjects/windsurf-project/friends/backend/src/main/java/com/friends/backend/chat/dto/SendMessageRequest.java
 /Users/fayzullotukhtasinov/CascadeProjects/windsurf-project/friends/backend/src/main/java/com/friends/backend/chat/dto/TypingUpdateRequest.java
+/Users/fayzullotukhtasinov/CascadeProjects/windsurf-project/friends/backend/src/main/java/com/friends/backend/closefriends/CloseFriendEntity.java
+/Users/fayzullotukhtasinov/CascadeProjects/windsurf-project/friends/backend/src/main/java/com/friends/backend/closefriends/CloseFriendId.java
+/Users/fayzullotukhtasinov/CascadeProjects/windsurf-project/friends/backend/src/main/java/com/friends/backend/closefriends/CloseFriendRepository.java
+/Users/fayzullotukhtasinov/CascadeProjects/windsurf-project/friends/backend/src/main/java/com/friends/backend/closefriends/CloseFriendsController.java
 /Users/fayzullotukhtasinov/CascadeProjects/windsurf-project/friends/backend/src/main/java/com/friends/backend/comment/CommentController.java
 /Users/fayzullotukhtasinov/CascadeProjects/windsurf-project/friends/backend/src/main/java/com/friends/backend/comment/CommentDislikeEntity.java
 /Users/fayzullotukhtasinov/CascadeProjects/windsurf-project/friends/backend/src/main/java/com/friends/backend/comment/CommentDislikeRepository.java
@@ -49,6 +53,7 @@
 /Users/fayzullotukhtasinov/CascadeProjects/windsurf-project/friends/backend/src/main/java/com/friends/backend/common/ApiError.java
 /Users/fayzullotukhtasinov/CascadeProjects/windsurf-project/friends/backend/src/main/java/com/friends/backend/common/GlobalExceptionHandler.java
 /Users/fayzullotukhtasinov/CascadeProjects/windsurf-project/friends/backend/src/main/java/com/friends/backend/common/PagedResponse.java
+/Users/fayzullotukhtasinov/CascadeProjects/windsurf-project/friends/backend/src/main/java/com/friends/backend/common/TrustSafetyUtils.java
 /Users/fayzullotukhtasinov/CascadeProjects/windsurf-project/friends/backend/src/main/java/com/friends/backend/follow/FollowController.java
 /Users/fayzullotukhtasinov/CascadeProjects/windsurf-project/friends/backend/src/main/java/com/friends/backend/follow/UserFollowEntity.java
 /Users/fayzullotukhtasinov/CascadeProjects/windsurf-project/friends/backend/src/main/java/com/friends/backend/follow/UserFollowId.java
@@ -69,6 +74,11 @@
 /Users/fayzullotukhtasinov/CascadeProjects/windsurf-project/friends/backend/src/main/java/com/friends/backend/notification/NotificationRepository.java
 /Users/fayzullotukhtasinov/CascadeProjects/windsurf-project/friends/backend/src/main/java/com/friends/backend/notification/dto/CreateNotificationRequest.java
 /Users/fayzullotukhtasinov/CascadeProjects/windsurf-project/friends/backend/src/main/java/com/friends/backend/notification/dto/NotificationResponse.java
+/Users/fayzullotukhtasinov/CascadeProjects/windsurf-project/friends/backend/src/main/java/com/friends/backend/notification/prefs/NotificationPreferencesController.java
+/Users/fayzullotukhtasinov/CascadeProjects/windsurf-project/friends/backend/src/main/java/com/friends/backend/notification/prefs/NotificationPreferencesEntity.java
+/Users/fayzullotukhtasinov/CascadeProjects/windsurf-project/friends/backend/src/main/java/com/friends/backend/notification/prefs/NotificationPreferencesRepository.java
+/Users/fayzullotukhtasinov/CascadeProjects/windsurf-project/friends/backend/src/main/java/com/friends/backend/notification/prefs/dto/NotificationPreferencesResponse.java
+/Users/fayzullotukhtasinov/CascadeProjects/windsurf-project/friends/backend/src/main/java/com/friends/backend/notification/prefs/dto/UpdateNotificationPreferencesRequest.java
 /Users/fayzullotukhtasinov/CascadeProjects/windsurf-project/friends/backend/src/main/java/com/friends/backend/post/PostController.java
 /Users/fayzullotukhtasinov/CascadeProjects/windsurf-project/friends/backend/src/main/java/com/friends/backend/post/PostEntity.java
 /Users/fayzullotukhtasinov/CascadeProjects/windsurf-project/friends/backend/src/main/java/com/friends/backend/post/PostLikeEntity.java
@@ -99,10 +109,12 @@
 /Users/fayzullotukhtasinov/CascadeProjects/windsurf-project/friends/backend/src/main/java/com/friends/backend/reel/dto/CreateReelRequest.java
 /Users/fayzullotukhtasinov/CascadeProjects/windsurf-project/friends/backend/src/main/java/com/friends/backend/reel/dto/ReelResponse.java
 /Users/fayzullotukhtasinov/CascadeProjects/windsurf-project/friends/backend/src/main/java/com/friends/backend/reel/dto/UpdateReelRequest.java
+/Users/fayzullotukhtasinov/CascadeProjects/windsurf-project/friends/backend/src/main/java/com/friends/backend/report/AdminReportController.java
 /Users/fayzullotukhtasinov/CascadeProjects/windsurf-project/friends/backend/src/main/java/com/friends/backend/report/ReportController.java
 /Users/fayzullotukhtasinov/CascadeProjects/windsurf-project/friends/backend/src/main/java/com/friends/backend/report/ReportEntity.java
 /Users/fayzullotukhtasinov/CascadeProjects/windsurf-project/friends/backend/src/main/java/com/friends/backend/report/ReportRepository.java
 /Users/fayzullotukhtasinov/CascadeProjects/windsurf-project/friends/backend/src/main/java/com/friends/backend/report/dto/CreateReportRequest.java
+/Users/fayzullotukhtasinov/CascadeProjects/windsurf-project/friends/backend/src/main/java/com/friends/backend/report/dto/ReportResponse.java
 /Users/fayzullotukhtasinov/CascadeProjects/windsurf-project/friends/backend/src/main/java/com/friends/backend/security/JwtAuthFilter.java
 /Users/fayzullotukhtasinov/CascadeProjects/windsurf-project/friends/backend/src/main/java/com/friends/backend/security/JwtService.java
 /Users/fayzullotukhtasinov/CascadeProjects/windsurf-project/friends/backend/src/main/java/com/friends/backend/security/SecurityConfig.java
@@ -165,6 +177,8 @@
 /Users/fayzullotukhtasinov/CascadeProjects/windsurf-project/friends/backend/src/main/java/com/friends/backend/user/UserEntity.java
 /Users/fayzullotukhtasinov/CascadeProjects/windsurf-project/friends/backend/src/main/java/com/friends/backend/user/UserRepository.java
 /Users/fayzullotukhtasinov/CascadeProjects/windsurf-project/friends/backend/src/main/java/com/friends/backend/user/UserService.java
+/Users/fayzullotukhtasinov/CascadeProjects/windsurf-project/friends/backend/src/main/java/com/friends/backend/user/admin/AdminUserBadgeController.java
+/Users/fayzullotukhtasinov/CascadeProjects/windsurf-project/friends/backend/src/main/java/com/friends/backend/user/admin/dto/UpdateUserBadgeRequest.java
 /Users/fayzullotukhtasinov/CascadeProjects/windsurf-project/friends/backend/src/main/java/com/friends/backend/user/dto/ChangePasswordRequest.java
 /Users/fayzullotukhtasinov/CascadeProjects/windsurf-project/friends/backend/src/main/java/com/friends/backend/user/dto/UpdateMeRequest.java
 /Users/fayzullotukhtasinov/CascadeProjects/windsurf-project/friends/backend/src/main/java/com/friends/backend/user/dto/UserSearchResponse.java

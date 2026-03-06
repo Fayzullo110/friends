@@ -2,6 +2,8 @@ package com.friends.backend.notification;
 
 import com.friends.backend.notification.dto.CreateNotificationRequest;
 import com.friends.backend.notification.dto.NotificationResponse;
+import com.friends.backend.notification.prefs.NotificationPreferencesEntity;
+import com.friends.backend.notification.prefs.NotificationPreferencesRepository;
 import com.friends.backend.security.UserPrincipal;
 import com.friends.backend.user.UserEntity;
 import com.friends.backend.user.UserRepository;
@@ -16,10 +18,15 @@ import org.springframework.web.bind.annotation.*;
 public class NotificationController {
   private final NotificationRepository notificationRepository;
   private final UserRepository userRepository;
+  private final NotificationPreferencesRepository prefsRepository;
 
-  public NotificationController(NotificationRepository notificationRepository, UserRepository userRepository) {
+  public NotificationController(
+      NotificationRepository notificationRepository,
+      UserRepository userRepository,
+      NotificationPreferencesRepository prefsRepository) {
     this.notificationRepository = notificationRepository;
     this.userRepository = userRepository;
+    this.prefsRepository = prefsRepository;
   }
 
   @GetMapping
@@ -55,6 +62,25 @@ public class NotificationController {
     }
     if (req.toUserId == principal.getUserId()) {
       throw new IllegalArgumentException("Cannot notify yourself");
+    }
+
+    final NotificationPreferencesEntity prefs = prefsRepository.findById(req.toUserId)
+        .orElseGet(() -> prefsRepository.save(new NotificationPreferencesEntity(req.toUserId)));
+    final String type = req.type == null ? "" : req.type.trim().toLowerCase();
+    if (type.equals("like") && !Boolean.TRUE.equals(prefs.getNotifyLikes())) {
+      return new NotificationResponse(0L, "skipped", principal.getUserId(), "user", null, null, true);
+    }
+    if (type.equals("comment") && !Boolean.TRUE.equals(prefs.getNotifyComments())) {
+      return new NotificationResponse(0L, "skipped", principal.getUserId(), "user", null, null, true);
+    }
+    if (type.equals("friend_request") && !Boolean.TRUE.equals(prefs.getNotifyFriendRequests())) {
+      return new NotificationResponse(0L, "skipped", principal.getUserId(), "user", null, null, true);
+    }
+    if (type.equals("friend_accepted") && !Boolean.TRUE.equals(prefs.getNotifyFriendAccepted())) {
+      return new NotificationResponse(0L, "skipped", principal.getUserId(), "user", null, null, true);
+    }
+    if (type.equals("follow") && !Boolean.TRUE.equals(prefs.getNotifyFollows())) {
+      return new NotificationResponse(0L, "skipped", principal.getUserId(), "user", null, null, true);
     }
 
     final NotificationEntity n = new NotificationEntity();

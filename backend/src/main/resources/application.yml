@@ -19,6 +19,8 @@ spring:
 app:
   upload:
     dir: ""
+  admin:
+    userIds: ""
   jwt:
     # Replace this in production (at least 32 chars). Keep it secret.
     secret: "change-me-change-me-change-me-change-me"

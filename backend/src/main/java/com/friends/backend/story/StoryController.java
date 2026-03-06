@@ -1,5 +1,9 @@
 package com.friends.backend.story;
 
+import com.friends.backend.block.UserBlockRepository;
+import com.friends.backend.common.TrustSafetyUtils;
+import com.friends.backend.follow.UserFollowRepository;
+import com.friends.backend.mute.UserMuteRepository;
 import com.friends.backend.security.UserPrincipal;
 import com.friends.backend.story.dto.CreateStoryRequest;
 import com.friends.backend.story.dto.StoryStickerEmojiSliderValueRequest;
@@ -23,6 +27,7 @@ import jakarta.validation.Valid;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.*;
+import java.util.stream.Collectors;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
@@ -39,6 +44,10 @@ public class StoryController {
   private final StoryStickerEmojiSliderValueRepository storyStickerEmojiSliderValueRepository;
   private final UserRepository userRepository;
 
+  private final UserMuteRepository userMuteRepository;
+  private final UserBlockRepository userBlockRepository;
+  private final UserFollowRepository userFollowRepository;
+
   public StoryController(
       StoryRepository storyRepository,
       StorySeenRepository storySeenRepository,
@@ -47,7 +56,10 @@ public class StoryController {
       StoryStickerPollVoteRepository storyStickerPollVoteRepository,
       StoryStickerQuestionAnswerRepository storyStickerQuestionAnswerRepository,
       StoryStickerEmojiSliderValueRepository storyStickerEmojiSliderValueRepository,
-      UserRepository userRepository) {
+      UserRepository userRepository,
+      UserMuteRepository userMuteRepository,
+      UserBlockRepository userBlockRepository,
+      UserFollowRepository userFollowRepository) {
     this.storyRepository = storyRepository;
     this.storySeenRepository = storySeenRepository;
     this.storyLikeRepository = storyLikeRepository;
@@ -56,14 +68,32 @@ public class StoryController {
     this.storyStickerQuestionAnswerRepository = storyStickerQuestionAnswerRepository;
     this.storyStickerEmojiSliderValueRepository = storyStickerEmojiSliderValueRepository;
     this.userRepository = userRepository;
+    this.userMuteRepository = userMuteRepository;
+    this.userBlockRepository = userBlockRepository;
+    this.userFollowRepository = userFollowRepository;
   }
 
   @GetMapping
   public List<StoryResponse> active(Authentication authentication) {
     final Instant now = Instant.now();
-    final Long meId = getUserIdOrNull(authentication);
-    final List<StoryEntity> stories = storyRepository
+    final Long meId = TrustSafetyUtils.getUserIdOrNull(authentication);
+    final Set<Long> excluded = TrustSafetyUtils.excludedUserIds(meId, userMuteRepository, userBlockRepository);
+
+    final List<StoryEntity> raw = storyRepository
         .findTop200ByExpiresAtAfterOrderByExpiresAtAscCreatedAtDesc(now);
+
+    final Set<Long> authorIds = raw.stream().map(StoryEntity::getAuthorId).filter(Objects::nonNull).collect(Collectors.toSet());
+    final Map<Long, UserEntity> usersById = userRepository.findAllById(authorIds).stream()
+        .collect(Collectors.toMap(UserEntity::getId, u -> u));
+    final Set<Long> myFollowingIds = meId == null
+        ? Set.of()
+        : new HashSet<>(userFollowRepository.findFollowingIds(meId));
+
+    final List<StoryEntity> stories = raw.stream()
+        .filter(s -> s.getAuthorId() != null)
+        .filter(s -> !excluded.contains(s.getAuthorId()))
+        .filter(s -> TrustSafetyUtils.canSeePrivateUser(meId, s.getAuthorId(), usersById, myFollowingIds))
+        .toList();
     final StickersPrefetch prefetch = prefetchStickers(stories, meId);
     return stories.stream().map(s -> toResponse(s, prefetch, meId)).toList();
   }
@@ -71,11 +101,65 @@ public class StoryController {
   @GetMapping("/user/{authorId}")
   public List<StoryResponse> activeByUser(@PathVariable long authorId, Authentication authentication) {
     final Instant now = Instant.now();
-    final Long meId = getUserIdOrNull(authentication);
+    final Long meId = TrustSafetyUtils.getUserIdOrNull(authentication);
+
+    if (meId == null || meId != authorId) {
+      final UserEntity author = userRepository.findById(authorId).orElse(null);
+      if (author == null) {
+        throw new IllegalArgumentException("User not found");
+      }
+      if (Boolean.TRUE.equals(author.getIsPrivateAccount())) {
+        if (meId == null) {
+          return List.of();
+        }
+        final boolean follows = userFollowRepository.existsAccepted(meId, authorId);
+        if (!follows) {
+          return List.of();
+        }
+      }
+    }
+
+    final Set<Long> excluded = TrustSafetyUtils.excludedUserIds(meId, userMuteRepository, userBlockRepository);
+    if (excluded.contains(authorId)) {
+      return List.of();
+    }
+
     final List<StoryEntity> stories = storyRepository
         .findTop200ByAuthorIdAndExpiresAtAfterOrderByExpiresAtAscCreatedAtDesc(authorId, now);
     final StickersPrefetch prefetch = prefetchStickers(stories, meId);
     return stories.stream().map(s -> toResponse(s, prefetch, meId)).toList();
+  }
+
+  @GetMapping("/{storyId}")
+  public StoryResponse byId(@PathVariable long storyId, Authentication authentication) {
+    final Long meId = TrustSafetyUtils.getUserIdOrNull(authentication);
+    final Set<Long> excluded = TrustSafetyUtils.excludedUserIds(meId, userMuteRepository, userBlockRepository);
+
+    final StoryEntity story = storyRepository.findById(storyId)
+        .orElseThrow(() -> new IllegalArgumentException("Story not found"));
+    final Long authorId = story.getAuthorId();
+    if (authorId == null) {
+      throw new IllegalArgumentException("Story not found");
+    }
+    if (excluded.contains(authorId)) {
+      throw new IllegalArgumentException("Story not found");
+    }
+
+    final UserEntity author = userRepository.findById(authorId).orElse(null);
+    if (author == null) {
+      throw new IllegalArgumentException("Story not found");
+    }
+    if (Boolean.TRUE.equals(author.getIsPrivateAccount())) {
+      if (meId == null) {
+        throw new IllegalArgumentException("Story not found");
+      }
+      if (meId != authorId && !userFollowRepository.existsAccepted(meId, authorId)) {
+        throw new IllegalArgumentException("Story not found");
+      }
+    }
+
+    final StickersPrefetch prefetch = prefetchStickers(List.of(story), meId);
+    return toResponse(story, prefetch, meId);
   }
 
   @PostMapping
@@ -190,13 +274,6 @@ public class StoryController {
     return principal.getUserId();
   }
 
-  private Long getUserIdOrNull(Authentication authentication) {
-    if (authentication == null) return null;
-    final Object p = authentication.getPrincipal();
-    if (!(p instanceof UserPrincipal principal)) return null;
-    return principal.getUserId();
-  }
-
   private StoryStickerEntity requireSticker(long storyId, long stickerId) {
     final StoryStickerEntity sticker = storyStickerRepository.findById(stickerId).orElse(null);
     if (sticker == null || sticker.getStoryId() == null || sticker.getStoryId() != storyId) {
@@ -268,7 +345,7 @@ public class StoryController {
         final long uid = ((Number) row[1]).longValue();
         final int option = ((Number) row[2]).intValue();
         pollCountsBySticker.computeIfAbsent(stid, k -> new HashMap<>())
-            .merge(option, 1L, Long::sum);
+            .merge(option, 1L, (a, b) -> a + b);
         pollChoiceByStickerByUser.computeIfAbsent(stid, k -> new HashMap<>())
             .put(uid, option);
       }
@@ -280,7 +357,7 @@ public class StoryController {
         final String answer = row[2] == null ? "" : row[2].toString();
         questionAnswerByStickerByUser.computeIfAbsent(stid, k -> new HashMap<>())
             .put(uid, answer);
-        questionCountBySticker.merge(stid, 1L, Long::sum);
+        questionCountBySticker.merge(stid, 1L, (a, b) -> a + b);
       }
 
       // Emoji slider

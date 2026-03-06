@@ -18,6 +18,9 @@ public class UserResponse {
   public boolean isPrivateAccount;
   public String commentPolicy;
 
+  public boolean isOfficial;
+  public String badgeType;
+
   public UserResponse(
       long id,
       String email,
@@ -33,7 +36,9 @@ public class UserResponse {
       boolean isOnline,
       String lastActiveAt,
       boolean isPrivateAccount,
-      String commentPolicy) {
+      String commentPolicy,
+      boolean isOfficial,
+      String badgeType) {
     this.id = id;
     this.email = email;
     this.username = username;
@@ -49,5 +54,7 @@ public class UserResponse {
     this.lastActiveAt = lastActiveAt;
     this.isPrivateAccount = isPrivateAccount;
     this.commentPolicy = commentPolicy;
+    this.isOfficial = isOfficial;
+    this.badgeType = badgeType;
   }
 }

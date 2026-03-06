@@ -2,7 +2,6 @@ package com.friends.backend.comment;
 
 import com.friends.backend.block.UserBlockId;
 import com.friends.backend.block.UserBlockRepository;
-import com.friends.backend.follow.UserFollowId;
 import com.friends.backend.follow.UserFollowRepository;
 import com.friends.backend.comment.dto.CommentResponse;
 import com.friends.backend.comment.dto.CreateCommentRequest;
@@ -83,8 +82,9 @@ public class CommentController {
     } else if (policy.equals("no_one")) {
       throw new IllegalArgumentException("Comments are disabled for this user.");
     } else if (policy.equals("followers")) {
-      final boolean follows = userFollowRepository.existsById(
-          new UserFollowId(me.getId(), postAuthor.getId()));
+      final boolean follows = userFollowRepository.existsAccepted(
+          me.getId(),
+          postAuthor.getId());
       if (!follows) {
         throw new IllegalArgumentException("Only followers can comment.");
       }

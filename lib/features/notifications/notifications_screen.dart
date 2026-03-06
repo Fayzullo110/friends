@@ -6,12 +6,33 @@ import '../../services/notification_service.dart';
 import '../../services/auth_service.dart';
 import '../../services/post_service.dart';
 import '../../services/reel_service.dart';
+import '../../services/notification_preferences_service.dart';
+import 'notification_settings_screen.dart';
 import '../post/post_viewer_screen.dart';
 import '../profile/profile_screen.dart';
 import '../reels/reels_screen.dart';
 
 class NotificationsScreen extends StatelessWidget {
   const NotificationsScreen({super.key});
+
+  List<_DigestRow> _digest(List<AppNotification> items) {
+    final Map<String, _DigestRow> byKey = {};
+    for (final n in items) {
+      final key = '${n.type.name}:${n.fromUserId}:${n.postId ?? ''}';
+      final existing = byKey[key];
+      if (existing == null) {
+        byKey[key] = _DigestRow(
+          notification: n,
+          count: 1,
+        );
+      } else {
+        byKey[key] = existing.copyWith(count: existing.count + 1);
+      }
+    }
+    final out = byKey.values.toList();
+    out.sort((a, b) => b.notification.createdAt.compareTo(a.notification.createdAt));
+    return out;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -28,6 +49,18 @@ class NotificationsScreen extends StatelessWidget {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Notifications'),
+        actions: [
+          IconButton(
+            icon: const Icon(IOSIcons.settings),
+            onPressed: () {
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => const NotificationSettingsScreen(),
+                ),
+              );
+            },
+          ),
+        ],
       ),
       body: StreamBuilder<List<AppNotification>>(
         stream: NotificationService.instance.watchMyNotifications(uid: me.id),
@@ -52,18 +85,95 @@ class NotificationsScreen extends StatelessWidget {
             );
           }
 
-          return ListView.separated(
-            padding: const EdgeInsets.symmetric(vertical: 8),
-            itemCount: items.length,
-            separatorBuilder: (_, __) => Divider(
-              height: 1,
-              color: theme.colorScheme.onSurface.withOpacity(0.08),
-            ),
-            itemBuilder: (context, index) {
-              return _NotificationTile(notification: items[index], theme: theme);
+          return FutureBuilder(
+            future: NotificationPreferencesService.instance.getMyPreferences(),
+            builder: (context, prefsSnap) {
+              final digestEnabled = prefsSnap.data?.digestEnabled ?? false;
+              if (!digestEnabled) {
+                return ListView.separated(
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  itemCount: items.length,
+                  separatorBuilder: (_, __) => Divider(
+                    height: 1,
+                    color: theme.colorScheme.onSurface.withOpacity(0.08),
+                  ),
+                  itemBuilder: (context, index) {
+                    return _NotificationTile(
+                      notification: items[index],
+                      theme: theme,
+                    );
+                  },
+                );
+              }
+
+              final rows = _digest(items);
+              return ListView.separated(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                itemCount: rows.length,
+                separatorBuilder: (_, __) => Divider(
+                  height: 1,
+                  color: theme.colorScheme.onSurface.withOpacity(0.08),
+                ),
+                itemBuilder: (context, index) {
+                  return _DigestTile(row: rows[index], theme: theme);
+                },
+              );
             },
           );
         },
+      ),
+    );
+  }
+}
+
+class _DigestRow {
+  final AppNotification notification;
+  final int count;
+
+  const _DigestRow({required this.notification, required this.count});
+
+  _DigestRow copyWith({AppNotification? notification, int? count}) {
+    return _DigestRow(
+      notification: notification ?? this.notification,
+      count: count ?? this.count,
+    );
+  }
+}
+
+class _DigestTile extends StatelessWidget {
+  final _DigestRow row;
+  final ThemeData theme;
+
+  const _DigestTile({required this.row, required this.theme});
+
+  @override
+  Widget build(BuildContext context) {
+    final n = row.notification;
+    final text = row.count <= 1
+        ? _NotificationTile(notification: n, theme: theme)._text()
+        : '${_NotificationTile(notification: n, theme: theme)._text()} (${row.count}x)';
+
+    return ListTile(
+      onTap: () => _NotificationTile(notification: n, theme: theme)._open(context),
+      leading: CircleAvatar(
+        backgroundColor: theme.colorScheme.surfaceVariant,
+        child: Icon(
+          _NotificationTile(notification: n, theme: theme)._iconForType(),
+          size: 18,
+          color: _NotificationTile(notification: n, theme: theme)._colorForType(),
+        ),
+      ),
+      title: Text(
+        text,
+        style: theme.textTheme.bodyMedium?.copyWith(
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+      subtitle: Text(
+        n.createdAt.toLocal().toString(),
+        style: theme.textTheme.bodySmall?.copyWith(
+          color: theme.colorScheme.onSurface.withOpacity(0.6),
+        ),
       ),
     );
   }

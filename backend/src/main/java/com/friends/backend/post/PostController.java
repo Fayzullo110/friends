@@ -1,5 +1,9 @@
 package com.friends.backend.post;
 
+import com.friends.backend.block.UserBlockRepository;
+import com.friends.backend.common.TrustSafetyUtils;
+import com.friends.backend.follow.UserFollowRepository;
+import com.friends.backend.mute.UserMuteRepository;
 import com.friends.backend.post.dto.CreatePostRequest;
 import com.friends.backend.post.dto.PostResponse;
 import com.friends.backend.post.dto.UpdatePostRequest;
@@ -9,8 +13,12 @@ import com.friends.backend.user.UserEntity;
 import com.friends.backend.user.UserRepository;
 import jakarta.validation.Valid;
 import java.time.Instant;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
+import java.util.stream.Collectors;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
@@ -23,36 +31,85 @@ public class PostController {
   private final PostLikeRepository postLikeRepository;
   private final UserRepository userRepository;
 
-  public PostController(PostRepository postRepository, PostLikeRepository postLikeRepository, UserRepository userRepository) {
+  private final UserMuteRepository userMuteRepository;
+  private final UserBlockRepository userBlockRepository;
+  private final UserFollowRepository userFollowRepository;
+
+  public PostController(
+      PostRepository postRepository,
+      PostLikeRepository postLikeRepository,
+      UserRepository userRepository,
+      UserMuteRepository userMuteRepository,
+      UserBlockRepository userBlockRepository,
+      UserFollowRepository userFollowRepository) {
     this.postRepository = postRepository;
     this.postLikeRepository = postLikeRepository;
     this.userRepository = userRepository;
+    this.userMuteRepository = userMuteRepository;
+    this.userBlockRepository = userBlockRepository;
+    this.userFollowRepository = userFollowRepository;
   }
 
   @GetMapping
   public List<PostResponse> recent(
       @RequestParam(name = "page", defaultValue = "0") int page,
-      @RequestParam(name = "limit", defaultValue = "100") int limit) {
+      @RequestParam(name = "limit", defaultValue = "100") int limit,
+      Authentication authentication) {
     final int safePage = Math.max(0, page);
     final int safeLimit = Math.min(200, Math.max(1, limit));
-    final List<PostEntity> posts = postRepository.findByArchivedAtIsNullAndDeletedAtIsNullOrderByCreatedAtDesc(
+
+    final Long meId = TrustSafetyUtils.getUserIdOrNull(authentication);
+    final Set<Long> excluded = TrustSafetyUtils.excludedUserIds(meId, userMuteRepository, userBlockRepository);
+
+    final List<PostEntity> raw = postRepository.findByArchivedAtIsNullAndDeletedAtIsNullOrderByCreatedAtDesc(
         PageRequest.of(safePage, safeLimit));
+
+    final Set<Long> authorIds = raw.stream().map(PostEntity::getAuthorId).filter(Objects::nonNull).collect(Collectors.toSet());
+    final Map<Long, UserEntity> usersById = userRepository.findAllById(authorIds).stream()
+        .collect(Collectors.toMap(UserEntity::getId, u -> u));
+    final Set<Long> myFollowingIds = meId == null
+        ? Set.of()
+        : new HashSet<>(userFollowRepository.findFollowingIds(meId));
+
+    final List<PostEntity> posts = raw.stream()
+        .filter(p -> p.getAuthorId() != null)
+        .filter(p -> !excluded.contains(p.getAuthorId()))
+        .filter(p -> TrustSafetyUtils.canSeePrivateUser(meId, p.getAuthorId(), usersById, myFollowingIds))
+        .toList();
+
     return posts.stream().map(this::toResponse).toList();
   }
 
   @GetMapping("/paged")
   public PagedResponse<PostResponse> recentPaged(
       @RequestParam(name = "page", defaultValue = "0") int page,
-      @RequestParam(name = "limit", defaultValue = "100") int limit) {
+      @RequestParam(name = "limit", defaultValue = "100") int limit,
+      Authentication authentication) {
     final int safePage = Math.max(0, page);
     final int safeLimit = Math.min(200, Math.max(1, limit));
 
     // Fetch one extra item to determine hasMore.
+    final Long meId = TrustSafetyUtils.getUserIdOrNull(authentication);
+    final Set<Long> excluded = TrustSafetyUtils.excludedUserIds(meId, userMuteRepository, userBlockRepository);
+
     final List<PostEntity> rows = postRepository.findByArchivedAtIsNullAndDeletedAtIsNullOrderByCreatedAtDesc(
         PageRequest.of(safePage, safeLimit + 1));
 
-    final boolean hasMore = rows.size() > safeLimit;
-    final List<PostEntity> pageRows = hasMore ? rows.subList(0, safeLimit) : rows;
+    final Set<Long> authorIds = rows.stream().map(PostEntity::getAuthorId).filter(Objects::nonNull).collect(Collectors.toSet());
+    final Map<Long, UserEntity> usersById = userRepository.findAllById(authorIds).stream()
+        .collect(Collectors.toMap(UserEntity::getId, u -> u));
+    final Set<Long> myFollowingIds = meId == null
+        ? Set.of()
+        : new HashSet<>(userFollowRepository.findFollowingIds(meId));
+
+    final List<PostEntity> filtered = rows.stream()
+        .filter(p -> p.getAuthorId() != null)
+        .filter(p -> !excluded.contains(p.getAuthorId()))
+        .filter(p -> TrustSafetyUtils.canSeePrivateUser(meId, p.getAuthorId(), usersById, myFollowingIds))
+        .toList();
+
+    final boolean hasMore = filtered.size() > safeLimit;
+    final List<PostEntity> pageRows = hasMore ? filtered.subList(0, safeLimit) : filtered;
     final List<PostResponse> items = pageRows.stream().map(this::toResponse).toList();
 
     return new PagedResponse<>(items, hasMore, hasMore ? safePage + 1 : null, null);
@@ -62,9 +119,33 @@ public class PostController {
   public List<PostResponse> byAuthor(
       @RequestParam(name = "authorId") long authorId,
       @RequestParam(name = "page", defaultValue = "0") int page,
-      @RequestParam(name = "limit", defaultValue = "100") int limit) {
+      @RequestParam(name = "limit", defaultValue = "100") int limit,
+      Authentication authentication) {
     final int safePage = Math.max(0, page);
     final int safeLimit = Math.min(200, Math.max(1, limit));
+
+    final Long meId = TrustSafetyUtils.getUserIdOrNull(authentication);
+    final Set<Long> excluded = TrustSafetyUtils.excludedUserIds(meId, userMuteRepository, userBlockRepository);
+    if (excluded.contains(authorId)) {
+      return List.of();
+    }
+
+    if (meId == null || meId != authorId) {
+      final UserEntity author = userRepository.findById(authorId).orElse(null);
+      if (author == null) {
+        throw new IllegalArgumentException("User not found");
+      }
+      if (Boolean.TRUE.equals(author.getIsPrivateAccount())) {
+        if (meId == null) {
+          return List.of();
+        }
+        final boolean follows = userFollowRepository.existsAccepted(meId, authorId);
+        if (!follows) {
+          return List.of();
+        }
+      }
+    }
+
     final List<PostEntity> posts = postRepository
         .findByAuthorIdAndArchivedAtIsNullAndDeletedAtIsNullOrderByCreatedAtDesc(authorId,
             PageRequest.of(safePage, safeLimit));
@@ -75,9 +156,32 @@ public class PostController {
   public PagedResponse<PostResponse> byAuthorPaged(
       @RequestParam(name = "authorId") long authorId,
       @RequestParam(name = "page", defaultValue = "0") int page,
-      @RequestParam(name = "limit", defaultValue = "100") int limit) {
+      @RequestParam(name = "limit", defaultValue = "100") int limit,
+      Authentication authentication) {
     final int safePage = Math.max(0, page);
     final int safeLimit = Math.min(200, Math.max(1, limit));
+
+    final Long meId = TrustSafetyUtils.getUserIdOrNull(authentication);
+    final Set<Long> excluded = TrustSafetyUtils.excludedUserIds(meId, userMuteRepository, userBlockRepository);
+    if (excluded.contains(authorId)) {
+      return new PagedResponse<>(List.of(), false, null, null);
+    }
+
+    if (meId == null || meId != authorId) {
+      final UserEntity author = userRepository.findById(authorId).orElse(null);
+      if (author == null) {
+        throw new IllegalArgumentException("User not found");
+      }
+      if (Boolean.TRUE.equals(author.getIsPrivateAccount())) {
+        if (meId == null) {
+          return new PagedResponse<>(List.of(), false, null, null);
+        }
+        final boolean follows = userFollowRepository.existsAccepted(meId, authorId);
+        if (!follows) {
+          return new PagedResponse<>(List.of(), false, null, null);
+        }
+      }
+    }
 
     final List<PostEntity> rows = postRepository
         .findByAuthorIdAndArchivedAtIsNullAndDeletedAtIsNullOrderByCreatedAtDesc(authorId,
@@ -91,12 +195,38 @@ public class PostController {
   }
 
   @GetMapping("/{postId}")
-  public PostResponse byId(@PathVariable long postId) {
+  public PostResponse byId(@PathVariable long postId, Authentication authentication) {
     final PostEntity post = postRepository.findById(postId)
         .orElseThrow(() -> new IllegalArgumentException("Post not found"));
     if (post.getDeletedAt() != null) {
       throw new IllegalArgumentException("Post is deleted");
     }
+
+    final Long meId = TrustSafetyUtils.getUserIdOrNull(authentication);
+    final Long authorId = post.getAuthorId();
+    if (authorId == null) {
+      throw new IllegalArgumentException("Post not found");
+    }
+
+    final Set<Long> excluded = TrustSafetyUtils.excludedUserIds(meId, userMuteRepository, userBlockRepository);
+    if (excluded.contains(authorId)) {
+      throw new IllegalArgumentException("Post not found");
+    }
+
+    final UserEntity author = userRepository.findById(authorId).orElse(null);
+    if (author == null) {
+      throw new IllegalArgumentException("Post not found");
+    }
+
+    if (Boolean.TRUE.equals(author.getIsPrivateAccount())) {
+      if (meId == null) {
+        throw new IllegalArgumentException("Post not found");
+      }
+      if (meId != authorId && !userFollowRepository.existsAccepted(meId, authorId)) {
+        throw new IllegalArgumentException("Post not found");
+      }
+    }
+
     return toResponse(post);
   }
 

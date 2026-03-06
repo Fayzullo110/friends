@@ -17,10 +17,18 @@ public class UserFollowEntity {
   @Column(name = "created_at", nullable = false, updatable = false)
   private Instant createdAt;
 
+  @Column(name = "status", nullable = false, length = 20)
+  private String status = "accepted";
+
   protected UserFollowEntity() {}
 
   public UserFollowEntity(UserFollowId id) {
     this.id = id;
+  }
+
+  public UserFollowEntity(UserFollowId id, String status) {
+    this.id = id;
+    this.status = status;
   }
 
   public UserFollowId getId() {
@@ -29,5 +37,13 @@ public class UserFollowEntity {
 
   public Instant getCreatedAt() {
     return createdAt;
+  }
+
+  public String getStatus() {
+    return status;
+  }
+
+  public void setStatus(String status) {
+    this.status = status;
   }
 }

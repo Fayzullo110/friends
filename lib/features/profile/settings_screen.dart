@@ -9,6 +9,8 @@ import 'change_password_screen.dart';
 import 'privacy_safety_screen.dart';
 import 'archived_posts_screen.dart';
 import 'archived_reels_screen.dart';
+import 'follow_requests_screen.dart';
+import 'theme_presets_screen.dart';
 
 class SettingsScreen extends StatelessWidget {
   const SettingsScreen({super.key});
@@ -64,6 +66,29 @@ class SettingsScreen extends StatelessWidget {
                   Navigator.of(context).push(
                     MaterialPageRoute(
                       builder: (_) => const NotificationsScreen(),
+                    ),
+                  );
+                },
+              ),
+              const Divider(height: 1),
+              ListTile(
+                leading: const Icon(IOSIcons.personAdd),
+                title: const Text('Follow requests'),
+                subtitle: const Text('Approve or decline who follows you'),
+                onTap: () {
+                  if (user == null) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content:
+                            Text('Please sign in to manage follow requests.'),
+                      ),
+                    );
+                    return;
+                  }
+
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => const FollowRequestsScreen(),
                     ),
                   );
                 },
@@ -155,9 +180,9 @@ class SettingsScreen extends StatelessWidget {
                   'Follows system: ${theme.brightness == Brightness.dark ? 'Dark' : 'Light'}',
                 ),
                 onTap: () {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('Theme is controlled by system for now.'),
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => const ThemePresetsScreen(),
                     ),
                   );
                 },

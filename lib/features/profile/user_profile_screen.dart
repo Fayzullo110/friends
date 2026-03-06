@@ -371,11 +371,37 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                           ],
                         ),
                         const SizedBox(height: 12),
-                        Text(
-                          widget.user.username,
-                          style: theme.textTheme.titleMedium?.copyWith(
-                            fontWeight: FontWeight.bold,
-                          ),
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Flexible(
+                              child: Text(
+                                widget.user.username,
+                                overflow: TextOverflow.ellipsis,
+                                style: theme.textTheme.titleMedium?.copyWith(
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ),
+                            if (widget.user.isOfficial)
+                              Padding(
+                                padding: const EdgeInsets.only(left: 6),
+                                child: Icon(
+                                  Icons.verified,
+                                  size: 18,
+                                  color: theme.colorScheme.primary,
+                                ),
+                              ),
+                            if ((widget.user.badgeType ?? '').trim().isNotEmpty)
+                              Padding(
+                                padding: const EdgeInsets.only(left: 6),
+                                child: Icon(
+                                  Icons.star,
+                                  size: 18,
+                                  color: theme.colorScheme.tertiary,
+                                ),
+                              ),
+                          ],
                         ),
                         const SizedBox(height: 6),
                         Container(
@@ -657,6 +683,7 @@ class _ProfileFollowButton extends StatefulWidget {
 class _ProfileFollowButtonState extends State<_ProfileFollowButton> {
   bool _loading = false;
   bool _isFollowing = false;
+  bool _isRequested = false;
 
   @override
   void initState() {
@@ -683,9 +710,17 @@ class _ProfileFollowButtonState extends State<_ProfileFollowButton> {
         toUserId: widget.target.id,
       );
 
+      final isRequested = isFollowing
+          ? false
+          : await FollowService.instance.isRequested(
+              fromUserId: me.id,
+              toUserId: widget.target.id,
+            );
+
       if (!mounted) return;
       setState(() {
         _isFollowing = isFollowing;
+        _isRequested = isRequested;
       });
     } finally {
       if (mounted) {
@@ -720,6 +755,11 @@ class _ProfileFollowButtonState extends State<_ProfileFollowButton> {
           fromUserId: me.id,
           toUserId: widget.target.id,
         );
+      } else if (_isRequested) {
+        await FollowService.instance.cancelRequest(
+          fromUserId: me.id,
+          toUserId: widget.target.id,
+        );
       } else {
         await FollowService.instance.follow(
           fromUserId: me.id,
@@ -729,7 +769,22 @@ class _ProfileFollowButtonState extends State<_ProfileFollowButton> {
 
       if (!mounted) return;
       setState(() {
-        _isFollowing = !_isFollowing;
+        if (_isFollowing) {
+          _isFollowing = false;
+          _isRequested = false;
+        } else if (_isRequested) {
+          _isRequested = false;
+          _isFollowing = false;
+        } else {
+          // Follow on private account becomes requested, otherwise becomes following.
+          if (widget.target.isPrivateAccount) {
+            _isRequested = true;
+            _isFollowing = false;
+          } else {
+            _isFollowing = true;
+            _isRequested = false;
+          }
+        }
       });
     } catch (e) {
       if (!mounted) return;
@@ -748,6 +803,8 @@ class _ProfileFollowButtonState extends State<_ProfileFollowButton> {
   @override
   Widget build(BuildContext context) {
     final isFollowing = _isFollowing;
+    final isRequested = _isRequested;
+    final label = isFollowing ? 'Friends' : (isRequested ? 'Requested' : 'Add friend');
     return FilledButton.tonal(
       onPressed: _loading ? null : _toggle,
       child: _loading
@@ -756,7 +813,7 @@ class _ProfileFollowButtonState extends State<_ProfileFollowButton> {
               height: 18,
               child: CircularProgressIndicator(strokeWidth: 2),
             )
-          : Text(isFollowing ? 'Friends' : 'Add friend'),
+          : Text(label),
     );
   }
 }

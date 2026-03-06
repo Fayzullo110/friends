@@ -16,6 +16,8 @@ import '../../services/story_highlight_service.dart';
 import '../../models/story_highlight.dart';
 import '../../services/auth_service.dart';
 import '../../services/user_cache_service.dart';
+import '../../services/mute_service.dart';
+import '../../services/report_service.dart';
 import '../../theme/ios_icons.dart';
 import '../../theme/app_themes.dart';
 import '../../widgets/safe_network_image.dart';
@@ -63,6 +65,10 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
 
   final TextEditingController _quickReplyController = TextEditingController();
   bool _isSendingQuick = false;
+
+  bool _loadingMuteState = false;
+  bool _isAuthorMuted = false;
+  String? _muteStateForAuthorId;
 
   static const _autoAdvanceDuration = Duration(seconds: 6);
 
@@ -115,6 +121,131 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
     _markSeen(_currentIndex);
     _loadMusicForIndex(_currentIndex, autoPlay: true);
     _startProgressForIndex(_currentIndex);
+
+    _loadMuteStateForCurrentStory();
+  }
+
+  Future<void> _loadMuteStateForCurrentStory() async {
+    final me = AuthService.instance.currentUser;
+    if (me == null) return;
+    if (_stories.isEmpty) return;
+    if (_isAddPage) return;
+
+    final story = _stories[_currentIndex];
+    if (story.authorId == me.id) return;
+
+    if (_muteStateForAuthorId == story.authorId) return;
+    _muteStateForAuthorId = story.authorId;
+
+    setState(() {
+      _loadingMuteState = true;
+    });
+    try {
+      final muted = await MuteService.instance.isMuted(toUserId: story.authorId);
+      if (!mounted) return;
+      setState(() {
+        _isAuthorMuted = muted;
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _loadingMuteState = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _toggleMuteCurrentAuthor() async {
+    final me = AuthService.instance.currentUser;
+    if (me == null) return;
+    if (_stories.isEmpty || _isAddPage) return;
+    final story = _stories[_currentIndex];
+    if (story.authorId == me.id) return;
+
+    if (_isAuthorMuted) {
+      await MuteService.instance.unmute(fromUserId: me.id, toUserId: story.authorId);
+      if (!mounted) return;
+      setState(() {
+        _isAuthorMuted = false;
+      });
+      return;
+    }
+
+    await MuteService.instance.mute(fromUserId: me.id, toUserId: story.authorId);
+    if (!mounted) return;
+    setState(() {
+      _isAuthorMuted = true;
+    });
+  }
+
+  Future<void> _reportCurrentStory() async {
+    final me = AuthService.instance.currentUser;
+    if (me == null) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please log in to report stories.')),
+      );
+      return;
+    }
+    if (_stories.isEmpty || _isAddPage) return;
+    final story = _stories[_currentIndex];
+
+    final reasonController = TextEditingController();
+    final detailsController = TextEditingController();
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Report story'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: reasonController,
+                decoration: const InputDecoration(labelText: 'Reason'),
+              ),
+              TextField(
+                controller: detailsController,
+                decoration: const InputDecoration(labelText: 'Details (optional)'),
+                maxLines: 3,
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('Report'),
+            ),
+          ],
+        );
+      },
+    );
+    if (confirm != true) return;
+
+    final reason = reasonController.text.trim();
+    final details = detailsController.text.trim();
+    if (reason.isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Reason is required.')),
+      );
+      return;
+    }
+
+    await ReportService.instance.report(
+      targetType: 'story',
+      targetId: story.id,
+      reason: reason,
+      details: details.isEmpty ? null : details,
+    );
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Report submitted.')),
+    );
   }
 
   Future<void> _refreshMyStoriesAndJumpToEnd() async {
@@ -450,6 +581,7 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
                   _markSeen(index);
                   _loadMusicForIndex(index, autoPlay: true);
                   _startProgressForIndex(index);
+                  _loadMuteStateForCurrentStory();
                 },
                 itemBuilder: (context, index) {
                   if (_isMine && index == _stories.length) {
@@ -509,6 +641,45 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
                         icon: const Icon(IOSIcons.close, color: Colors.white),
                         onPressed: () => Navigator.of(context).pop(),
                       ),
+                      if (!_isMine && !_isAddPage)
+                        PopupMenuButton<String>(
+                          icon: const Icon(IOSIcons.moreVert, color: Colors.white),
+                          onSelected: (v) async {
+                            if (v == 'mute') {
+                              await _toggleMuteCurrentAuthor();
+                            } else if (v == 'report_story') {
+                              await _reportCurrentStory();
+                            }
+                          },
+                          itemBuilder: (context) {
+                            final muteLabel = _loadingMuteState
+                                ? 'Mute'
+                                : (_isAuthorMuted ? 'Unmute user' : 'Mute user');
+                            return [
+                              PopupMenuItem(
+                                value: 'mute',
+                                enabled: !_loadingMuteState,
+                                child: Row(
+                                  children: [
+                                    const Icon(IOSIcons.volumeOff, size: 18),
+                                    const SizedBox(width: 8),
+                                    Text(muteLabel),
+                                  ],
+                                ),
+                              ),
+                              const PopupMenuItem(
+                                value: 'report_story',
+                                child: Row(
+                                  children: [
+                                    Icon(IOSIcons.flag, size: 18),
+                                    SizedBox(width: 8),
+                                    Text('Report story'),
+                                  ],
+                                ),
+                              ),
+                            ];
+                          },
+                        ),
                     ],
                   ),
                   const SizedBox(height: 8),
@@ -1604,6 +1775,74 @@ class _StoryCommentsSheetState extends State<_StoryCommentsSheet> {
   final _controller = TextEditingController();
   bool _isSubmitting = false;
 
+  Future<void> _reportComment(StoryComment c) async {
+    final me = AuthService.instance.currentUser;
+    if (me == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please sign in to report comments')),
+      );
+      return;
+    }
+
+    final reasonController = TextEditingController();
+    final detailsController = TextEditingController();
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Report comment'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: reasonController,
+                decoration: const InputDecoration(labelText: 'Reason'),
+              ),
+              TextField(
+                controller: detailsController,
+                decoration: const InputDecoration(labelText: 'Details (optional)'),
+                maxLines: 3,
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('Report'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (confirm != true) return;
+    final reason = reasonController.text.trim();
+    final details = detailsController.text.trim();
+    if (reason.isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Reason is required.')),
+      );
+      return;
+    }
+
+    await ReportService.instance.report(
+      targetType: 'story_comment',
+      targetId: c.id,
+      reason: reason,
+      details: details.isEmpty ? null : details,
+    );
+
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Report submitted.')),
+    );
+  }
+
   @override
   void dispose() {
     _controller.dispose();
@@ -1725,9 +1964,30 @@ class _StoryCommentsSheetState extends State<_StoryCommentsSheet> {
                           ),
                         ),
                         subtitle: Text(c.text),
-                        trailing: Text(
-                          _formatTimeAgo(c.createdAt),
-                          style: theme.textTheme.bodySmall,
+                        trailing: PopupMenuButton<String>(
+                          onSelected: (v) async {
+                            if (v == 'report') {
+                              await _reportComment(c);
+                            }
+                          },
+                          itemBuilder: (context) {
+                            return const [
+                              PopupMenuItem(
+                                value: 'report',
+                                child: Row(
+                                  children: [
+                                    Icon(IOSIcons.flag, size: 18),
+                                    SizedBox(width: 8),
+                                    Text('Report'),
+                                  ],
+                                ),
+                              ),
+                            ];
+                          },
+                          child: Text(
+                            _formatTimeAgo(c.createdAt),
+                            style: theme.textTheme.bodySmall,
+                          ),
                         ),
                       );
                     },

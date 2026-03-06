@@ -288,23 +288,47 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                               crossAxisAlignment:
                                                   CrossAxisAlignment.start,
                                               children: [
-                                                Text(
-                                                  (user.displayName != null &&
-                                                          user.displayName!
-                                                              .trim()
-                                                              .isNotEmpty)
-                                                      ? user.displayName!
-                                                      : user.username,
-                                                  maxLines: 1,
-                                                  overflow:
-                                                      TextOverflow.ellipsis,
-                                                  style: theme
-                                                      .textTheme.titleLarge
-                                                      ?.copyWith(
-                                                    fontWeight:
-                                                        FontWeight.w800,
-                                                    height: 1.1,
-                                                  ),
+                                                Row(
+                                                  children: [
+                                                    Expanded(
+                                                      child: Text(
+                                                        (user.displayName != null &&
+                                                                user.displayName!
+                                                                    .trim()
+                                                                    .isNotEmpty)
+                                                            ? user.displayName!
+                                                            : user.username,
+                                                        maxLines: 1,
+                                                        overflow:
+                                                            TextOverflow.ellipsis,
+                                                        style: theme
+                                                            .textTheme.titleLarge
+                                                            ?.copyWith(
+                                                          fontWeight:
+                                                              FontWeight.w800,
+                                                          height: 1.1,
+                                                        ),
+                                                      ),
+                                                    ),
+                                                    if (user.isOfficial)
+                                                      Padding(
+                                                        padding: const EdgeInsets.only(left: 6),
+                                                        child: Icon(
+                                                          IOSIcons.checkCircleFill,
+                                                          size: 18,
+                                                          color: theme.colorScheme.primary,
+                                                        ),
+                                                      ),
+                                                    if ((user.badgeType ?? '').trim().isNotEmpty)
+                                                      Padding(
+                                                        padding: const EdgeInsets.only(left: 6),
+                                                        child: Icon(
+                                                          IOSIcons.starFill,
+                                                          size: 18,
+                                                          color: theme.colorScheme.tertiary,
+                                                        ),
+                                                      ),
+                                                  ],
                                                 ),
                                                 const SizedBox(height: 6),
                                                 Container(

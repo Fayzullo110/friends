@@ -1,0 +1,11 @@
+CREATE TABLE notification_preferences (
+  user_id BIGINT PRIMARY KEY,
+  notify_likes BOOLEAN NOT NULL DEFAULT TRUE,
+  notify_comments BOOLEAN NOT NULL DEFAULT TRUE,
+  notify_friend_requests BOOLEAN NOT NULL DEFAULT TRUE,
+  notify_friend_accepted BOOLEAN NOT NULL DEFAULT TRUE,
+  notify_follows BOOLEAN NOT NULL DEFAULT TRUE,
+  digest_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  CONSTRAINT fk_notification_preferences_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);

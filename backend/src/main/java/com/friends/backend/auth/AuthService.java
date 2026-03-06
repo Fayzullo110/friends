@@ -81,7 +81,9 @@ public class AuthService {
         Boolean.TRUE.equals(user.getIsOnline()),
         user.getLastActiveAt() == null ? null : user.getLastActiveAt().toString(),
         Boolean.TRUE.equals(user.getIsPrivateAccount()),
-        user.getCommentPolicy());
+        user.getCommentPolicy(),
+        Boolean.TRUE.equals(user.getIsOfficial()),
+        user.getBadgeType());
   }
 
   private static String normalizeNullable(String value) {

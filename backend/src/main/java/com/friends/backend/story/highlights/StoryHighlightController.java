@@ -1,5 +1,9 @@
 package com.friends.backend.story.highlights;
 
+import com.friends.backend.block.UserBlockRepository;
+import com.friends.backend.common.TrustSafetyUtils;
+import com.friends.backend.follow.UserFollowRepository;
+import com.friends.backend.mute.UserMuteRepository;
 import com.friends.backend.security.UserPrincipal;
 import com.friends.backend.story.StoryEntity;
 import com.friends.backend.story.StoryLikeRepository;
@@ -16,9 +20,12 @@ import com.friends.backend.user.UserEntity;
 import com.friends.backend.user.UserRepository;
 import jakarta.validation.Valid;
 import java.util.*;
+import java.util.stream.Collectors;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.server.ResponseStatusException;
 
 @RestController
 @RequestMapping("/api/story-highlights")
@@ -30,19 +37,39 @@ public class StoryHighlightController {
   private final StoryLikeRepository storyLikeRepository;
   private final UserRepository userRepository;
 
+  private final UserMuteRepository userMuteRepository;
+  private final UserBlockRepository userBlockRepository;
+  private final UserFollowRepository userFollowRepository;
+
   public StoryHighlightController(
       StoryHighlightRepository highlightRepository,
       StoryHighlightItemRepository itemRepository,
       StoryRepository storyRepository,
       StorySeenRepository storySeenRepository,
       StoryLikeRepository storyLikeRepository,
-      UserRepository userRepository) {
+      UserRepository userRepository,
+      UserMuteRepository userMuteRepository,
+      UserBlockRepository userBlockRepository,
+      UserFollowRepository userFollowRepository) {
     this.highlightRepository = highlightRepository;
     this.itemRepository = itemRepository;
     this.storyRepository = storyRepository;
     this.storySeenRepository = storySeenRepository;
     this.storyLikeRepository = storyLikeRepository;
     this.userRepository = userRepository;
+    this.userMuteRepository = userMuteRepository;
+    this.userBlockRepository = userBlockRepository;
+    this.userFollowRepository = userFollowRepository;
+  }
+
+  private boolean canSeePrivateUser(Long meId, long ownerId) {
+    if (meId != null && meId == ownerId) return true;
+    final UserEntity owner = userRepository.findById(ownerId).orElse(null);
+    if (owner == null) return false;
+    final boolean isPrivate = Boolean.TRUE.equals(owner.getIsPrivateAccount());
+    if (!isPrivate) return true;
+    if (meId == null) return false;
+    return userFollowRepository.existsAccepted(meId, ownerId);
   }
 
   @PatchMapping("/{highlightId}")
@@ -104,7 +131,16 @@ public class StoryHighlightController {
   }
 
   @GetMapping("/user/{userId}")
-  public List<StoryHighlightResponse> listByUser(@PathVariable long userId) {
+  public List<StoryHighlightResponse> listByUser(@PathVariable long userId, Authentication authentication) {
+    final Long meId = TrustSafetyUtils.getUserIdOrNull(authentication);
+    final Set<Long> excluded = TrustSafetyUtils.excludedUserIds(meId, userMuteRepository, userBlockRepository);
+    if (excluded.contains(userId)) {
+      return List.of();
+    }
+    if (!canSeePrivateUser(meId, userId)) {
+      return List.of();
+    }
+
     final List<StoryHighlightEntity> highlights = highlightRepository.findByOwnerIdOrderByUpdatedAtDesc(userId);
     if (highlights.isEmpty()) return List.of();
 
@@ -161,9 +197,19 @@ public class StoryHighlightController {
   }
 
   @GetMapping("/{highlightId}")
-  public StoryHighlightResponse get(@PathVariable long highlightId) {
+  public StoryHighlightResponse get(@PathVariable long highlightId, Authentication authentication) {
+    final Long meId = TrustSafetyUtils.getUserIdOrNull(authentication);
     final StoryHighlightEntity h = highlightRepository.findById(highlightId)
-        .orElseThrow(() -> new IllegalArgumentException("Highlight not found"));
+        .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Highlight not found"));
+
+    final Set<Long> excluded = TrustSafetyUtils.excludedUserIds(meId, userMuteRepository, userBlockRepository);
+    if (excluded.contains(h.getOwnerId())) {
+      throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Highlight not found");
+    }
+    if (!canSeePrivateUser(meId, h.getOwnerId())) {
+      throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Not allowed");
+    }
+
     final List<StoryHighlightItemEntity> its = itemRepository.findByIdHighlightIdOrderByPositionAsc(highlightId);
     final List<Long> storyIds = its.stream().map(i -> i.getId().getStoryId()).toList();
 
@@ -188,13 +234,27 @@ public class StoryHighlightController {
 
   @GetMapping("/{highlightId}/stories")
   public List<StoryResponse> stories(@PathVariable long highlightId, Authentication authentication) {
-    highlightRepository.findById(highlightId)
-        .orElseThrow(() -> new IllegalArgumentException("Highlight not found"));
+    final Long meId = TrustSafetyUtils.getUserIdOrNull(authentication);
+    final StoryHighlightEntity h = highlightRepository.findById(highlightId)
+        .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Highlight not found"));
+
+    final Set<Long> excluded = TrustSafetyUtils.excludedUserIds(meId, userMuteRepository, userBlockRepository);
+    if (excluded.contains(h.getOwnerId())) {
+      return List.of();
+    }
+    if (!canSeePrivateUser(meId, h.getOwnerId())) {
+      return List.of();
+    }
+
     final List<StoryHighlightItemEntity> its = itemRepository.findByIdHighlightIdOrderByPositionAsc(highlightId);
     if (its.isEmpty()) return List.of();
 
     final List<Long> storyIds = its.stream().map(i -> i.getId().getStoryId()).toList();
-    final List<StoryEntity> stories = storyRepository.findAllById(storyIds);
+    // Only include stories that belong to the highlight owner.
+    final List<StoryEntity> stories = storyRepository.findAllById(storyIds)
+        .stream()
+        .filter(s -> Objects.equals(s.getAuthorId(), h.getOwnerId()))
+        .collect(Collectors.toList());
     final Map<Long, StoryEntity> byId = new HashMap<>();
     for (final StoryEntity s : stories) {
       byId.put(s.getId(), s);
