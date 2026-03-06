@@ -5,8 +5,11 @@ import '../../services/follow_service.dart';
 import '../../services/post_service.dart';
 import '../../services/auth_service.dart';
 import '../../services/block_service.dart';
+import '../../services/mute_service.dart';
+import '../../services/report_service.dart';
 import '../../widgets/safe_network_image.dart';
 import '../../theme/app_themes.dart';
+import '../../theme/ios_icons.dart';
 
 class UserProfileScreen extends StatefulWidget {
   final AppUser user;
@@ -33,10 +36,129 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
   bool _isBlockedMe = false;
   bool _loadingBlockState = false;
 
+  bool _isMuted = false;
+  bool _loadingMuteState = false;
+
   @override
   void initState() {
     super.initState();
     _loadBlockState();
+    _loadMuteState();
+  }
+
+  Future<void> _loadMuteState() async {
+    final me = AuthService.instance.currentUser;
+    if (me == null) return;
+
+    setState(() {
+      _loadingMuteState = true;
+    });
+
+    try {
+      final muted = await MuteService.instance.isMuted(toUserId: widget.user.id);
+      if (!mounted) return;
+      setState(() {
+        _isMuted = muted;
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _loadingMuteState = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _toggleMute() async {
+    final me = AuthService.instance.currentUser;
+    if (me == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please log in to manage mutes.')),
+      );
+      return;
+    }
+
+    if (_isMuted) {
+      await MuteService.instance.unmute(fromUserId: me.id, toUserId: widget.user.id);
+      if (!mounted) return;
+      setState(() {
+        _isMuted = false;
+      });
+      return;
+    }
+
+    await MuteService.instance.mute(fromUserId: me.id, toUserId: widget.user.id);
+    if (!mounted) return;
+    setState(() {
+      _isMuted = true;
+    });
+  }
+
+  Future<void> _reportUser() async {
+    final me = AuthService.instance.currentUser;
+    if (me == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please log in to report users.')),
+      );
+      return;
+    }
+
+    final reasonController = TextEditingController();
+    final detailsController = TextEditingController();
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Report user'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: reasonController,
+                decoration: const InputDecoration(labelText: 'Reason'),
+              ),
+              TextField(
+                controller: detailsController,
+                decoration: const InputDecoration(labelText: 'Details (optional)'),
+                maxLines: 3,
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('Report'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (confirm != true) return;
+    final reason = reasonController.text.trim();
+    final details = detailsController.text.trim();
+    if (reason.isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Reason is required.')),
+      );
+      return;
+    }
+
+    await ReportService.instance.report(
+      targetType: 'user',
+      targetId: widget.user.id,
+      reason: reason,
+      details: details.isEmpty ? null : details,
+    );
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Report submitted.')),
+    );
   }
 
   Future<void> _loadBlockState() async {
@@ -143,6 +265,47 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
             : '@${widget.user.username}'),
         backgroundColor: accent.withOpacity(0.06),
         foregroundColor: theme.colorScheme.onSurface,
+        actions: [
+          if (!isMe)
+            PopupMenuButton<String>(
+              icon: const Icon(IOSIcons.moreVert),
+              onSelected: (v) async {
+                if (v == 'mute') {
+                  await _toggleMute();
+                } else if (v == 'report') {
+                  await _reportUser();
+                }
+              },
+              itemBuilder: (context) {
+                final muteLabel = _loadingMuteState
+                    ? 'Mute'
+                    : (_isMuted ? 'Unmute' : 'Mute');
+                return [
+                  PopupMenuItem(
+                    value: 'mute',
+                    enabled: !_loadingMuteState,
+                    child: Row(
+                      children: [
+                        const Icon(IOSIcons.volumeOff, size: 18),
+                        const SizedBox(width: 8),
+                        Text(muteLabel),
+                      ],
+                    ),
+                  ),
+                  const PopupMenuItem(
+                    value: 'report',
+                    child: Row(
+                      children: [
+                        Icon(IOSIcons.flag, size: 18),
+                        SizedBox(width: 8),
+                        Text('Report'),
+                      ],
+                    ),
+                  ),
+                ];
+              },
+            ),
+        ],
       ),
       body: Container(
         decoration: BoxDecoration(

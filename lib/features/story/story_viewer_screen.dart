@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
 
@@ -8,8 +9,11 @@ import 'package:just_audio/just_audio.dart';
 import '../../models/story.dart';
 import '../../models/story_comment.dart';
 import '../../models/chat.dart';
+import '../../models/story_sticker.dart';
 import '../../services/chat_service.dart';
 import '../../services/story_service.dart';
+import '../../services/story_highlight_service.dart';
+import '../../models/story_highlight.dart';
 import '../../services/auth_service.dart';
 import '../../services/user_cache_service.dart';
 import '../../theme/ios_icons.dart';
@@ -56,6 +60,9 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
   bool _wasMusicPlayingBeforeHold = false;
   bool _musicLoading = false;
   String? _musicFailedUrl;
+
+  final TextEditingController _quickReplyController = TextEditingController();
+  bool _isSendingQuick = false;
 
   static const _autoAdvanceDuration = Duration(seconds: 6);
 
@@ -309,6 +316,7 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
     _progressController.dispose();
     _audioPlayer.dispose();
     _userCacheSub.cancel();
+    _quickReplyController.dispose();
     super.dispose();
   }
 
@@ -513,12 +521,117 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
               bottom: 16,
               left: 16,
               right: 16,
-              child: _buildActionBar(),
+              child: _buildBottomBar(),
             ),
           ],
         ),
       ),
     );
+  }
+
+  bool get _canQuickReply {
+    if (_isAddPage) return false;
+    if (_stories.isEmpty) return false;
+    final me = AuthService.instance.currentUser;
+    if (me == null) return false;
+    final story = _stories[_currentIndex];
+    return story.authorId != me.id;
+  }
+
+  Future<String?> _ensureDirectChatWithAuthor() async {
+    final me = AuthService.instance.currentUser;
+    if (me == null) return null;
+    if (_isAddPage) return null;
+    if (_stories.isEmpty) return null;
+
+    final story = _stories[_currentIndex];
+    final author = await UserCacheService.instance.get(story.authorId);
+    if (author.id.trim().isEmpty) return null;
+    if (author.id == me.id) return null;
+
+    try {
+      final chatId = await ChatService.instance.createOrGetDirectChat(
+        me: me,
+        other: author,
+      );
+      return chatId;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> _sendQuickReaction(String emoji) async {
+    if (!_canQuickReply) return;
+    if (_isSendingQuick) return;
+
+    setState(() {
+      _isSendingQuick = true;
+    });
+    _pauseForHold();
+
+    try {
+      final chatId = await _ensureDirectChatWithAuthor();
+      if (chatId == null) return;
+      final me = AuthService.instance.currentUser;
+      if (me == null) return;
+
+      await ChatService.instance.sendText(
+        chatId: chatId,
+        senderId: me.id,
+        text: '$emoji (reacted to your story)',
+      );
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Sent $emoji')),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isSendingQuick = false;
+        });
+      }
+      _resumeAfterHold();
+    }
+  }
+
+  Future<void> _sendQuickReply() async {
+    if (!_canQuickReply) return;
+    if (_isSendingQuick) return;
+    final text = _quickReplyController.text.trim();
+    if (text.isEmpty) return;
+
+    FocusScope.of(context).unfocus();
+    setState(() {
+      _isSendingQuick = true;
+    });
+    _pauseForHold();
+
+    try {
+      final chatId = await _ensureDirectChatWithAuthor();
+      if (chatId == null) return;
+      final me = AuthService.instance.currentUser;
+      if (me == null) return;
+
+      await ChatService.instance.sendText(
+        chatId: chatId,
+        senderId: me.id,
+        text: text,
+      );
+
+      _quickReplyController.clear();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Reply sent')),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isSendingQuick = false;
+        });
+      }
+      _resumeAfterHold();
+    }
   }
 
   Widget _buildHeaderInfo() {
@@ -657,8 +770,137 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
               ),
               onPressed: _toggleMusic,
             ),
+        if (_isMine && !_isAddPage)
+          IconButton(
+            icon: const Icon(IOSIcons.bookmark, color: Colors.white),
+            tooltip: 'Add to highlight',
+            onPressed: _showAddToHighlight,
+          ),
       ],
     );
+  }
+
+  Future<void> _showAddToHighlight() async {
+    if (_isAddPage) return;
+    final me = AuthService.instance.currentUser;
+    if (me == null) return;
+
+    final story = _stories[_currentIndex];
+    if (story.authorId != me.id) return;
+
+    _pauseForHold();
+
+    List<StoryHighlight> highlights = const <StoryHighlight>[];
+    try {
+      highlights = await StoryHighlightService.instance
+          .getUserHighlightsOnce(userId: me.id);
+    } catch (_) {
+      // swallow
+    }
+
+    if (!mounted) {
+      _resumeAfterHold();
+      return;
+    }
+
+    Future<void> createNewAndAdd() async {
+      final controller = TextEditingController();
+      try {
+        final ok = await showDialog<bool>(
+          context: context,
+          builder: (ctx) {
+            return AlertDialog(
+              title: const Text('New highlight'),
+              content: TextField(
+                controller: controller,
+                decoration: const InputDecoration(labelText: 'Title'),
+                maxLength: 80,
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(ctx).pop(false),
+                  child: const Text('Cancel'),
+                ),
+                TextButton(
+                  onPressed: () => Navigator.of(ctx).pop(true),
+                  child: const Text('Create'),
+                ),
+              ],
+            );
+          },
+        );
+
+        if (ok != true) return;
+        final title = controller.text.trim();
+        if (title.isEmpty) return;
+        final newId = await StoryHighlightService.instance.createHighlight(
+          title: title,
+        );
+        await StoryHighlightService.instance.addStoryToHighlight(
+          highlightId: newId,
+          storyId: story.id,
+        );
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Added to highlight.')),
+        );
+      } finally {
+        controller.dispose();
+      }
+    }
+
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (ctx) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                leading: const Icon(Icons.add_circle_outline),
+                title: const Text('Create new highlight'),
+                onTap: () async {
+                  Navigator.of(ctx).pop();
+                  await createNewAndAdd();
+                },
+              ),
+              if (highlights.isEmpty)
+                const Padding(
+                  padding: EdgeInsets.fromLTRB(16, 6, 16, 16),
+                  child: Text('No highlights yet.'),
+                )
+              else
+                for (final h in highlights)
+                  ListTile(
+                    leading: const Icon(IOSIcons.bookmark),
+                    title: Text(h.title),
+                    subtitle: Text('${h.itemCount} stories'),
+                    onTap: () async {
+                      Navigator.of(ctx).pop();
+                      try {
+                        await StoryHighlightService.instance.addStoryToHighlight(
+                          highlightId: h.id,
+                          storyId: story.id,
+                        );
+                        if (!mounted) return;
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: Text('Added to ${h.title}')),
+                        );
+                      } catch (e) {
+                        if (!mounted) return;
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: Text('Failed: $e')),
+                        );
+                      }
+                    },
+                  ),
+              const SizedBox(height: 8),
+            ],
+          ),
+        );
+      },
+    ).whenComplete(_resumeAfterHold);
   }
 
   Widget _buildStoryPage(BuildContext context, Story story) {
@@ -668,83 +910,372 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
       case 'image':
       case 'gif':
         if (story.mediaUrl == null || story.mediaUrl!.isEmpty) {
-          return _buildTextOnlyStory(context, story);
+          return _buildStoryCanvas(context, story, child: _buildTextOnlyStory(context, story));
         }
-        return Stack(
-          fit: StackFit.expand,
-          children: [
-            SafeNetworkImage(
-              url: story.mediaUrl,
-              fit: BoxFit.cover,
-              placeholder: const Center(
-                child: SizedBox(
-                  width: 28,
-                  height: 28,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2,
-                    valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+        return _buildStoryCanvas(
+          context,
+          story,
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              SafeNetworkImage(
+                url: story.mediaUrl,
+                fit: BoxFit.cover,
+                placeholder: const Center(
+                  child: SizedBox(
+                    width: 28,
+                    height: 28,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                    ),
+                  ),
+                ),
+                error: const Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(IOSIcons.brokenImage, color: Colors.white70, size: 42),
+                      SizedBox(height: 8),
+                      Text(
+                        'Failed to load media',
+                        style: TextStyle(color: Colors.white70),
+                      ),
+                    ],
                   ),
                 ),
               ),
-              error: const Center(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(IOSIcons.brokenImage, color: Colors.white70, size: 42),
-                    SizedBox(height: 8),
-                    Text(
-                      'Failed to load media',
-                      style: TextStyle(color: Colors.white70),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            if (story.text != null && story.text!.isNotEmpty)
-              _buildCaptionOverlay(theme, story.text!),
-          ],
+              if (story.text != null && story.text!.isNotEmpty)
+                _buildCaptionOverlay(theme, story.text!),
+            ],
+          ),
         );
       case 'video':
         if (story.mediaUrl == null || story.mediaUrl!.isEmpty) {
-          return _buildTextOnlyStory(context, story);
+          return _buildStoryCanvas(context, story, child: _buildTextOnlyStory(context, story));
         }
-        return Stack(
-          fit: StackFit.expand,
-          children: [
-            Container(color: Colors.black),
-            Center(
-              child: IconButton(
-                iconSize: 64,
-                color: Colors.white,
-                icon: const Icon(IOSIcons.playCircle),
-                onPressed: () {
-                  final wasPlaying = _musicPlaying;
-                  _audioPlayer.pause();
-                  setState(() {
-                    _musicPlaying = false;
-                  });
-                  Navigator.of(context)
-                      .push(
-                        MaterialPageRoute(
-                          builder: (_) => VideoPlayerScreen(url: story.mediaUrl!),
-                        ),
-                      )
-                      .then((_) {
-                    if (!mounted) return;
-                    if (wasPlaying) {
-                      _loadMusicForIndex(_currentIndex, autoPlay: true);
-                    }
-                  });
-                },
+        return _buildStoryCanvas(
+          context,
+          story,
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              Container(color: Colors.black),
+              Center(
+                child: IconButton(
+                  iconSize: 64,
+                  color: Colors.white,
+                  icon: const Icon(IOSIcons.playCircle),
+                  onPressed: () {
+                    final wasPlaying = _musicPlaying;
+                    _audioPlayer.pause();
+                    setState(() {
+                      _musicPlaying = false;
+                    });
+                    Navigator.of(context)
+                        .push(
+                          MaterialPageRoute(
+                            builder: (_) => VideoPlayerScreen(url: story.mediaUrl!),
+                          ),
+                        )
+                        .then((_) {
+                      if (!mounted) return;
+                      if (wasPlaying) {
+                        _loadMusicForIndex(_currentIndex, autoPlay: true);
+                      }
+                    });
+                  },
+                ),
               ),
-            ),
-            if (story.text != null && story.text!.isNotEmpty)
-              _buildCaptionOverlay(theme, story.text!),
-          ],
+              if (story.text != null && story.text!.isNotEmpty)
+                _buildCaptionOverlay(theme, story.text!),
+            ],
+          ),
         );
       case 'text':
       default:
-        return _buildTextOnlyStory(context, story);
+        return _buildStoryCanvas(context, story, child: _buildTextOnlyStory(context, story));
+    }
+  }
+
+  Widget _buildStoryCanvas(BuildContext context, Story story, {required Widget child}) {
+    if (story.stickers.isEmpty) return child;
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final w = constraints.maxWidth;
+        final h = constraints.maxHeight;
+        return Stack(
+          fit: StackFit.expand,
+          children: [
+            child,
+            for (final st in story.stickers)
+              _buildStickerWidget(
+                context: context,
+                story: story,
+                sticker: st,
+                canvasWidth: w,
+                canvasHeight: h,
+              ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildStickerWidget({
+    required BuildContext context,
+    required Story story,
+    required StorySticker sticker,
+    required double canvasWidth,
+    required double canvasHeight,
+  }) {
+    const stickerWidth = 210.0;
+    const stickerHeight = 64.0;
+
+    final left = (sticker.posX * canvasWidth) - (stickerWidth / 2);
+    final top = (sticker.posY * canvasHeight) - (stickerHeight / 2);
+
+    final theme = Theme.of(context);
+
+    Map<String, dynamic> data = const {};
+    try {
+      if ((sticker.dataJson ?? '').trim().isNotEmpty) {
+        data = jsonDecode(sticker.dataJson!) as Map<String, dynamic>;
+      }
+    } catch (_) {
+      data = const {};
+    }
+
+    String title = sticker.type;
+    if (sticker.type == 'poll') {
+      title = (data['question'] as String?) ?? 'Poll';
+    } else if (sticker.type == 'question') {
+      title = (data['prompt'] as String?) ?? 'Question';
+    } else if (sticker.type == 'emoji_slider') {
+      final emoji = (data['emoji'] as String?) ?? '🔥';
+      final label = (data['label'] as String?) ?? '';
+      title = label.trim().isEmpty ? emoji : '$emoji  $label';
+    }
+
+    String subtitle = '';
+    if (sticker.type == 'poll') {
+      if (sticker.myPollChoice != null) {
+        subtitle = 'Voted';
+      } else {
+        subtitle = 'Tap to vote';
+      }
+    } else if (sticker.type == 'question') {
+      final c = sticker.questionAnswerCount ?? 0;
+      subtitle = c == 0 ? 'Tap to answer' : '$c answers';
+    } else if (sticker.type == 'emoji_slider') {
+      final cnt = sticker.emojiSliderCount ?? 0;
+      subtitle = cnt == 0
+          ? 'Tap to react'
+          : 'Avg ${(sticker.emojiSliderAvg ?? 0).toStringAsFixed(1)} ($cnt)';
+    }
+
+    return Positioned(
+      left: left,
+      top: top,
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(16),
+          onTap: () => _onStickerTap(story: story, sticker: sticker, data: data),
+          child: Container(
+            width: stickerWidth,
+            height: stickerHeight,
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.92),
+              borderRadius: BorderRadius.circular(16),
+              boxShadow: const [
+                BoxShadow(
+                  color: Colors.black26,
+                  blurRadius: 10,
+                  offset: Offset(0, 6),
+                ),
+              ],
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  subtitle,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onSurface.withOpacity(0.7),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _onStickerTap({
+    required Story story,
+    required StorySticker sticker,
+    required Map<String, dynamic> data,
+  }) async {
+    if (_isAddPage) return;
+    _pauseForHold();
+
+    try {
+      if (sticker.type == 'poll') {
+        final options = (data['options'] as List<dynamic>? ?? const [])
+            .map((e) => e.toString())
+            .toList();
+        if (options.isEmpty) return;
+        final picked = await showModalBottomSheet<int>(
+          context: context,
+          showDragHandle: true,
+          builder: (ctx) {
+            return SafeArea(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 6),
+                    child: Text(
+                      (data['question'] as String?) ?? 'Poll',
+                      style: Theme.of(ctx)
+                          .textTheme
+                          .titleMedium
+                          ?.copyWith(fontWeight: FontWeight.w700),
+                    ),
+                  ),
+                  for (var i = 0; i < options.length; i++)
+                    ListTile(
+                      title: Text(options[i]),
+                      trailing: (sticker.myPollChoice == i)
+                          ? const Icon(Icons.check)
+                          : null,
+                      onTap: () => Navigator.of(ctx).pop(i),
+                    ),
+                  const SizedBox(height: 8),
+                ],
+              ),
+            );
+          },
+        );
+        if (picked == null) return;
+        await StoryService.instance.votePollSticker(
+          storyId: story.id,
+          stickerId: sticker.id,
+          optionIndex: picked,
+        );
+      } else if (sticker.type == 'question') {
+        final prompt = (data['prompt'] as String?) ?? 'Answer';
+        final controller = TextEditingController(text: sticker.myQuestionAnswer);
+        try {
+          final ok = await showDialog<bool>(
+            context: context,
+            builder: (ctx) {
+              return AlertDialog(
+                title: Text(prompt),
+                content: TextField(
+                  controller: controller,
+                  decoration: const InputDecoration(hintText: 'Your answer…'),
+                  maxLines: 3,
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.of(ctx).pop(false),
+                    child: const Text('Cancel'),
+                  ),
+                  TextButton(
+                    onPressed: () => Navigator.of(ctx).pop(true),
+                    child: const Text('Send'),
+                  ),
+                ],
+              );
+            },
+          );
+          if (ok != true) return;
+          final answer = controller.text.trim();
+          if (answer.isEmpty) return;
+          await StoryService.instance.answerQuestionSticker(
+            storyId: story.id,
+            stickerId: sticker.id,
+            answerText: answer,
+          );
+        } finally {
+          controller.dispose();
+        }
+      } else if (sticker.type == 'emoji_slider') {
+        int value = sticker.myEmojiSliderValue ?? 50;
+        final ok = await showDialog<bool>(
+          context: context,
+          builder: (ctx) {
+            return StatefulBuilder(
+              builder: (context, setLocalState) {
+                return AlertDialog(
+                  title: Text((data['label'] as String?)?.trim().isNotEmpty == true
+                      ? '${data['emoji'] ?? '🔥'}  ${data['label']}'
+                      : (data['emoji'] as String?) ?? '🔥'),
+                  content: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Slider(
+                        value: value.toDouble(),
+                        min: 0,
+                        max: 100,
+                        divisions: 100,
+                        label: '$value',
+                        onChanged: (v) {
+                          setLocalState(() {
+                            value = v.round();
+                          });
+                        },
+                      ),
+                    ],
+                  ),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.of(ctx).pop(false),
+                      child: const Text('Cancel'),
+                    ),
+                    TextButton(
+                      onPressed: () => Navigator.of(ctx).pop(true),
+                      child: const Text('Send'),
+                    ),
+                  ],
+                );
+              },
+            );
+          },
+        );
+        if (ok != true) return;
+        await StoryService.instance.setEmojiSliderStickerValue(
+          storyId: story.id,
+          stickerId: sticker.id,
+          value: value,
+        );
+      }
+
+      if (!mounted) return;
+      setState(() {
+        // trigger rebuild; actual results come from polling story refresh
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Sent')),
+      );
+    } finally {
+      _resumeAfterHold();
     }
   }
 
@@ -795,14 +1326,17 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
     );
   }
 
-  Widget _buildActionBar() {
+  Widget _buildBottomBar() {
     final story = widget.stories[_currentIndex];
     final currentUserId = AuthService.instance.currentUser?.id;
-    final isLiked = currentUserId != null && story.likedBy.contains(currentUserId);
+    final isLiked =
+        currentUserId != null && story.likedBy.contains(currentUserId);
 
-    return Row(
+    final theme = Theme.of(context);
+    final quickEmojis = <String>['❤️', '😂', '😮', '😢', '🔥', '👏'];
+
+    final actionRow = Row(
       children: [
-        // Like button with count
         GestureDetector(
           onTap: _toggleLike,
           onLongPress: _showLikes,
@@ -829,7 +1363,6 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
           ),
         ),
         const SizedBox(width: 24),
-        // Comment button
         GestureDetector(
           onTap: _showComments,
           child: const Icon(
@@ -839,7 +1372,6 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
           ),
         ),
         const Spacer(),
-        // Send/Share button
         GestureDetector(
           onTap: _showSendOptions,
           child: const Icon(
@@ -850,7 +1382,89 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
         ),
       ],
     );
+
+    if (!_canQuickReply) return actionRow;
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          decoration: BoxDecoration(
+            color: Colors.black.withOpacity(0.25),
+            borderRadius: BorderRadius.circular(999),
+            border: Border.all(color: Colors.white.withOpacity(0.12)),
+          ),
+          child: Row(
+            children: [
+              for (final e in quickEmojis)
+                InkWell(
+                  borderRadius: BorderRadius.circular(999),
+                  onTap: _isSendingQuick ? null : () => _sendQuickReaction(e),
+                  child: Padding(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    child: Text(e, style: const TextStyle(fontSize: 22)),
+                  ),
+                ),
+              const Spacer(),
+              if (_isSendingQuick)
+                const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                  ),
+                ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 10),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          decoration: BoxDecoration(
+            color: Colors.black.withOpacity(0.25),
+            borderRadius: BorderRadius.circular(999),
+            border: Border.all(color: Colors.white.withOpacity(0.12)),
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _quickReplyController,
+                  enabled: !_isSendingQuick,
+                  onTap: _pauseForHold,
+                  onSubmitted: (_) => _sendQuickReply(),
+                  style: const TextStyle(color: Colors.white),
+                  decoration: const InputDecoration(
+                    hintText: 'Reply…',
+                    hintStyle: TextStyle(color: Colors.white70),
+                    border: InputBorder.none,
+                    isDense: true,
+                  ),
+                ),
+              ),
+              IconButton(
+                onPressed: _isSendingQuick ? null : _sendQuickReply,
+                icon: const Icon(
+                  IOSIcons.send,
+                  color: Colors.white,
+                  size: 18,
+                ),
+                tooltip: 'Send reply',
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 12),
+        actionRow,
+        if (theme.platform == TargetPlatform.android)
+          const SizedBox(height: 2),
+      ],
+    );
   }
+
 }
 
 class _StoryLikesSheet extends StatefulWidget {

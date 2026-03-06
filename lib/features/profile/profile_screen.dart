@@ -12,12 +12,16 @@ import '../../services/chat_service.dart';
 import '../../services/follow_service.dart';
 import '../../services/post_service.dart';
 import '../../services/reel_service.dart';
+import '../../services/story_highlight_service.dart';
+import '../../models/story_highlight.dart';
 import '../../theme/ios_icons.dart';
 import '../../theme/app_themes.dart';
 import '../chat/chat_detail_screen.dart';
 import '../post/post_viewer_screen.dart';
 import '../reels/reels_screen.dart';
 import '../../widgets/safe_network_image.dart';
+import '../story/highlight_viewer_screen.dart';
+import '../story/highlight_edit_screen.dart';
 import 'edit_profile_screen.dart';
 import 'settings_screen.dart';
 
@@ -742,6 +746,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
                               ),
                             ),
                             const SizedBox(height: 14),
+                            _HighlightsRow(
+                              ownerId: user.id,
+                              isOwnProfile: isOwnProfile,
+                              accent: accent,
+                            ),
                           ],
                         ),
                       ),
@@ -1494,6 +1503,193 @@ class _ProfileBackgroundMediaState extends State<_ProfileBackgroundMedia> {
           child: VideoPlayer(c),
         ),
       ),
+    );
+  }
+}
+
+class _HighlightsRow extends StatelessWidget {
+  final String ownerId;
+  final bool isOwnProfile;
+  final Color accent;
+
+  const _HighlightsRow({
+    required this.ownerId,
+    required this.isOwnProfile,
+    required this.accent,
+  });
+
+  Future<void> _createHighlight(BuildContext context) async {
+    final controller = TextEditingController();
+    try {
+      final ok = await showDialog<bool>(
+        context: context,
+        builder: (ctx) {
+          return AlertDialog(
+            title: const Text('New highlight'),
+            content: TextField(
+              controller: controller,
+              decoration: const InputDecoration(
+                labelText: 'Title',
+              ),
+              maxLength: 80,
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(ctx).pop(false),
+                child: const Text('Cancel'),
+              ),
+              TextButton(
+                onPressed: () => Navigator.of(ctx).pop(true),
+                child: const Text('Create'),
+              ),
+            ],
+          );
+        },
+      );
+
+      if (ok != true) return;
+      final title = controller.text.trim();
+      if (title.isEmpty) return;
+      await StoryHighlightService.instance.createHighlight(title: title);
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Highlight created.')),
+      );
+    } catch (e) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed: $e')),
+      );
+    } finally {
+      controller.dispose();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return StreamBuilder<List<StoryHighlight>>(
+      stream: StoryHighlightService.instance.watchUserHighlights(userId: ownerId),
+      builder: (context, snapshot) {
+        final highlights = snapshot.data ?? const <StoryHighlight>[];
+
+        if (!isOwnProfile && highlights.isEmpty) {
+          return const SizedBox.shrink();
+        }
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Text(
+                  'Highlights',
+                  style: theme.textTheme.titleSmall?.copyWith(
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const Spacer(),
+                if (isOwnProfile)
+                  TextButton.icon(
+                    onPressed: () => _createHighlight(context),
+                    icon: const Icon(Icons.add, size: 18),
+                    label: const Text('New'),
+                  ),
+              ],
+            ),
+            SizedBox(
+              height: 98,
+              child: ListView.separated(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                itemBuilder: (context, index) {
+                  final h = highlights[index];
+                  final coverUrl = h.coverMediaUrl;
+
+                  return InkWell(
+                    onTap: () {
+                      Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) => HighlightViewerScreen(highlight: h),
+                        ),
+                      );
+                    },
+                    onLongPress: !isOwnProfile
+                        ? null
+                        : () async {
+                            final changed = await Navigator.of(context).push<bool>(
+                              MaterialPageRoute(
+                                builder: (_) => HighlightEditScreen(highlight: h),
+                              ),
+                            );
+                            if (changed == true && context.mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(content: Text('Highlight updated.')),
+                              );
+                            }
+                          },
+                    borderRadius: BorderRadius.circular(14),
+                    child: SizedBox(
+                      width: 78,
+                      child: Column(
+                        children: [
+                          Container(
+                            width: 64,
+                            height: 64,
+                            padding: const EdgeInsets.all(2),
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              border: Border.all(
+                                color: accent.withOpacity(0.75),
+                                width: 2,
+                              ),
+                            ),
+                            child: ClipOval(
+                              child: (coverUrl != null && coverUrl.trim().isNotEmpty)
+                                  ? SafeNetworkImage(
+                                      url: coverUrl,
+                                      width: 60,
+                                      height: 60,
+                                      fit: BoxFit.cover,
+                                    )
+                                  : Container(
+                                      color: accent.withOpacity(0.12),
+                                      alignment: Alignment.center,
+                                      child: Text(
+                                        h.title.trim().isNotEmpty
+                                            ? h.title.trim()[0].toUpperCase()
+                                            : 'H',
+                                        style: TextStyle(
+                                          fontWeight: FontWeight.w900,
+                                          color: accent,
+                                        ),
+                                      ),
+                                    ),
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            h.title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            textAlign: TextAlign.center,
+                            style: theme.textTheme.labelSmall?.copyWith(
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  );
+                },
+                separatorBuilder: (_, __) => const SizedBox(width: 12),
+                itemCount: highlights.length,
+              ),
+            ),
+          ],
+        );
+      },
     );
   }
 }

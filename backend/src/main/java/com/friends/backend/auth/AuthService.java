@@ -79,7 +79,9 @@ public class AuthService {
         user.getThemeKey(),
         user.getThemeSeedColor(),
         Boolean.TRUE.equals(user.getIsOnline()),
-        user.getLastActiveAt() == null ? null : user.getLastActiveAt().toString());
+        user.getLastActiveAt() == null ? null : user.getLastActiveAt().toString(),
+        Boolean.TRUE.equals(user.getIsPrivateAccount()),
+        user.getCommentPolicy());
   }
 
   private static String normalizeNullable(String value) {

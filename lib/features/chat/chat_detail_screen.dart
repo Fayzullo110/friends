@@ -5,6 +5,7 @@ import 'package:record/record.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:image_picker/image_picker.dart';
 
+import '../../models/chat.dart';
 import '../../models/chat_message.dart';
 import '../../models/story.dart';
 import '../../services/chat_service.dart';
@@ -24,6 +25,63 @@ import 'voice_message_player.dart';
 enum RecordMode {
   voice,
   video,
+}
+
+class _PinnedBanner extends StatelessWidget {
+  final bool isBusy;
+  final VoidCallback? onClose;
+
+  const _PinnedBanner({
+    required this.isBusy,
+    required this.onClose,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      margin: const EdgeInsets.fromLTRB(12, 10, 12, 6),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surface,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: theme.colorScheme.onSurface.withOpacity(0.08),
+        ),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            IOSIcons.bookmarkFill,
+            size: 18,
+            color: theme.colorScheme.primary,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              'Pinned message',
+              overflow: TextOverflow.ellipsis,
+              style: theme.textTheme.labelLarge?.copyWith(
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+          if (isBusy)
+            const SizedBox(
+              width: 18,
+              height: 18,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            )
+          else
+            IconButton(
+              onPressed: onClose,
+              icon: const Icon(IOSIcons.close, size: 18),
+              tooltip: 'Unpin',
+            ),
+        ],
+      ),
+    );
+  }
 }
 
 class ChatDetailScreen extends StatefulWidget {
@@ -52,6 +110,10 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
   bool _hasText = false;
   bool _isSending = false;
 
+  ChatMessage? _replyTo;
+  Chat? _chat;
+  bool _isUpdatingPin = false;
+
   late final StreamSubscription<String> _userCacheSub;
 
   static const int _pageSize = 50;
@@ -70,6 +132,102 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
     super.dispose();
   }
 
+  void _showMessageActions(ChatMessage message, String currentUserId) {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) {
+        final theme = Theme.of(ctx);
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: theme.colorScheme.surface,
+                    borderRadius: BorderRadius.circular(14),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.12),
+                        blurRadius: 12,
+                        offset: const Offset(0, 6),
+                      ),
+                    ],
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                    children: [
+                      TextButton.icon(
+                        onPressed: _isUpdatingPin
+                            ? null
+                            : () async {
+                                Navigator.of(ctx).pop();
+                                setState(() {
+                                  _isUpdatingPin = true;
+                                });
+                                try {
+                                  final pinnedId = _chat?.pinnedMessageId;
+                                  if (pinnedId == message.id) {
+                                    await ChatService.instance.unpinMessage(
+                                      chatId: widget.chatId,
+                                    );
+                                  } else {
+                                    await ChatService.instance.pinMessage(
+                                      chatId: widget.chatId,
+                                      messageId: message.id,
+                                    );
+                                  }
+                                  await _refreshChat();
+                                } catch (_) {
+                                  // swallow
+                                } finally {
+                                  if (mounted) {
+                                    setState(() {
+                                      _isUpdatingPin = false;
+                                    });
+                                  }
+                                }
+                              },
+                        icon: const Icon(IOSIcons.bookmark, size: 18),
+                        label: Text(
+                          (_chat?.pinnedMessageId == message.id)
+                              ? 'Unpin'
+                              : 'Pin',
+                        ),
+                      ),
+                      TextButton.icon(
+                        onPressed: () {
+                          Navigator.of(ctx).pop();
+                          setState(() {
+                            _replyTo = message;
+                          });
+                        },
+                        icon: const Icon(IOSIcons.reply, size: 18),
+                        label: const Text('Reply'),
+                      ),
+                      TextButton.icon(
+                        onPressed: () {
+                          Navigator.of(ctx).pop();
+                          _showReactionsBar(message.id, currentUserId);
+                        },
+                        icon: const Icon(IOSIcons.handThumbsup, size: 18),
+                        label: const Text('React'),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   @override
   void initState() {
     super.initState();
@@ -77,6 +235,20 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
     _userCacheSub = UserCacheService.instance.updates.listen((_) {
       if (mounted) setState(() {});
     });
+
+    _refreshChat();
+  }
+
+  Future<void> _refreshChat() async {
+    try {
+      final c = await ChatService.instance.fetchChatOnce(chatId: widget.chatId);
+      if (!mounted) return;
+      setState(() {
+        _chat = c;
+      });
+    } catch (_) {
+      // swallow
+    }
   }
 
   void _maybeLoadOlder() {
@@ -382,6 +554,29 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
       ),
       body: Column(
         children: [
+          if ((_chat?.pinnedMessageId ?? '').trim().isNotEmpty)
+            _PinnedBanner(
+              isBusy: _isUpdatingPin,
+              onClose: _isUpdatingPin
+                  ? null
+                  : () async {
+                      setState(() {
+                        _isUpdatingPin = true;
+                      });
+                      try {
+                        await ChatService.instance.unpinMessage(
+                          chatId: widget.chatId,
+                        );
+                        await _refreshChat();
+                      } finally {
+                        if (mounted) {
+                          setState(() {
+                            _isUpdatingPin = false;
+                          });
+                        }
+                      }
+                    },
+            ),
           Expanded(
             child: StreamBuilder<List<ChatMessage>>(
               stream:
@@ -480,7 +675,15 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
                       currentUserId: currentUserId,
                       senderPhotoUrl: isMe ? null : m.senderPhotoUrl,
                       onLongPress: () {
-                        _showReactionsBar(m.id, currentUserId);
+                        _showMessageActions(m, currentUserId);
+                      },
+                      onDoubleTap: () async {
+                        await ChatService.instance.toggleReaction(
+                          chatId: widget.chatId,
+                          messageId: m.id,
+                          userId: currentUserId,
+                          emoji: '👍',
+                        );
                       },
                     );
                   },
@@ -492,142 +695,166 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
             top: false,
             child: Padding(
               padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-              child: Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                decoration: BoxDecoration(
-                  color: isDark ? theme.colorScheme.surface : Colors.white,
-                  borderRadius: BorderRadius.circular(999),
-                  boxShadow: [
-                    if (!isDark)
-                      BoxShadow(
-                        color: Colors.black.withOpacity(0.05),
-                        blurRadius: 10,
-                        offset: const Offset(0, 4),
-                      ),
-                  ],
-                ),
-                child: Row(
-                  children: [
-                    IconButton(
-                      onPressed: _isSending
-                          ? null
-                          : () {
-                        showModalBottomSheet(
-                          context: context,
-                          isScrollControlled: true,
-                          builder: (ctx) =>
-                              MediaActionsSheet(chatId: widget.chatId),
-                        );
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (_replyTo != null) ...[
+                    _ReplyPreviewBar(
+                      message: _replyTo!,
+                      onCancel: () {
+                        setState(() {
+                          _replyTo = null;
+                        });
                       },
-                      icon: const Icon(IOSIcons.addCircleOutline),
                     ),
-                    Expanded(
-                      child: TextField(
-                        controller: _controller,
-                        textInputAction: TextInputAction.send,
-                        enabled: !_isSending,
-                        onSubmitted: _isSending ? null : (_) => _send(currentUserId),
-                        onChanged: (value) {
-                          final trimmed = value.trim();
-                          final isNowTyping = trimmed.isNotEmpty;
-                          if (isNowTyping != _isTyping) {
-                            ChatService.instance.setTyping(
-                              chatId: widget.chatId,
-                              userId: currentUserId,
-                              isTyping: isNowTyping,
-                            );
-                          }
-                          if (isNowTyping != _hasText) {
-                            setState(() {
-                              _isTyping = isNowTyping;
-                              _hasText = isNowTyping;
-                            });
-                          }
-                        },
-                        decoration: const InputDecoration(
-                          hintText: 'Type your message…',
-                          border: InputBorder.none,
-                          isDense: true,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 4),
-                    if (!_hasText) ...[
-                      GestureDetector(
-                        onTap: _isSending
-                            ? null
-                            : () {
-                          setState(() {
-                            _recordMode = _recordMode == RecordMode.voice
-                                ? RecordMode.video
-                                : RecordMode.voice;
-                          });
-                        },
-                        onLongPress: _isSending
-                            ? null
-                            : () {
-                          if (_recordMode == RecordMode.voice) {
-                            _toggleVoiceRecord(currentUserId);
-                          } else {
-                            _startVideoCapture(currentUserId);
-                          }
-                        },
-                        child: Container(
-                          padding: const EdgeInsets.all(6),
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: _recordMode == RecordMode.video
-                                ? Theme.of(context)
-                                    .colorScheme
-                                    .primary
-                                    .withOpacity(0.12)
-                                : (_isRecording
-                                    ? Colors.redAccent.withOpacity(0.15)
-                                    : Colors.transparent),
-                          ),
-                          child: Icon(
-                            _recordMode == RecordMode.voice
-                                ? (_isRecording ? IOSIcons.stop : IOSIcons.mic)
-                                : IOSIcons.videoCam,
-                            color: _recordMode == RecordMode.video
-                                ? Theme.of(context).colorScheme.primary
-                                : (_isRecording
-                                    ? Colors.redAccent
-                                    : Theme.of(context).iconTheme.color),
-                          ),
-                        ),
-                      ),
-                    ],
-                    if (_hasText) ...[
-                      const SizedBox(width: 6),
-                      Container(
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: theme.colorScheme.primary,
-                        ),
-                        child: IconButton(
-                          onPressed: _isSending ? null : () => _send(currentUserId),
-                          icon: _isSending
-                              ? const SizedBox(
-                                  width: 18,
-                                  height: 18,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                    valueColor:
-                                        AlwaysStoppedAnimation<Color>(Colors.white),
-                                  ),
-                                )
-                              : const Icon(
-                                  IOSIcons.send,
-                                  size: 18,
-                                  color: Colors.white,
-                                ),
-                        ),
-                      ),
-                    ],
+                    const SizedBox(height: 8),
                   ],
-                ),
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                    decoration: BoxDecoration(
+                      color: isDark ? theme.colorScheme.surface : Colors.white,
+                      borderRadius: BorderRadius.circular(999),
+                      boxShadow: [
+                        if (!isDark)
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.05),
+                            blurRadius: 10,
+                            offset: const Offset(0, 4),
+                          ),
+                      ],
+                    ),
+                    child: Row(
+                      children: [
+                        IconButton(
+                          onPressed: _isSending
+                              ? null
+                              : () {
+                                  showModalBottomSheet(
+                                    context: context,
+                                    isScrollControlled: true,
+                                    builder: (ctx) => MediaActionsSheet(
+                                      chatId: widget.chatId,
+                                      replyToMessageId: _replyTo?.id,
+                                    ),
+                                  );
+                                },
+                          icon: const Icon(IOSIcons.addCircleOutline),
+                        ),
+                        Expanded(
+                          child: TextField(
+                            controller: _controller,
+                            textInputAction: TextInputAction.send,
+                            enabled: !_isSending,
+                            onSubmitted:
+                                _isSending ? null : (_) => _send(currentUserId),
+                            onChanged: (value) {
+                              final trimmed = value.trim();
+                              final isNowTyping = trimmed.isNotEmpty;
+                              if (isNowTyping != _isTyping) {
+                                ChatService.instance.setTyping(
+                                  chatId: widget.chatId,
+                                  userId: currentUserId,
+                                  isTyping: isNowTyping,
+                                );
+                              }
+                              if (isNowTyping != _hasText) {
+                                setState(() {
+                                  _isTyping = isNowTyping;
+                                  _hasText = isNowTyping;
+                                });
+                              }
+                            },
+                            decoration: const InputDecoration(
+                              hintText: 'Type your message…',
+                              border: InputBorder.none,
+                              isDense: true,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 4),
+                        if (!_hasText) ...[
+                          GestureDetector(
+                            onTap: _isSending
+                                ? null
+                                : () {
+                                    setState(() {
+                                      _recordMode = _recordMode == RecordMode.voice
+                                          ? RecordMode.video
+                                          : RecordMode.voice;
+                                    });
+                                  },
+                            onLongPress: _isSending
+                                ? null
+                                : () {
+                                    if (_recordMode == RecordMode.voice) {
+                                      _toggleVoiceRecord(currentUserId);
+                                    } else {
+                                      _startVideoCapture(currentUserId);
+                                    }
+                                  },
+                            child: Container(
+                              padding: const EdgeInsets.all(6),
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                color: _recordMode == RecordMode.video
+                                    ? Theme.of(context)
+                                        .colorScheme
+                                        .primary
+                                        .withOpacity(0.12)
+                                    : (_isRecording
+                                        ? Colors.redAccent.withOpacity(0.15)
+                                        : Colors.transparent),
+                              ),
+                              child: Icon(
+                                _recordMode == RecordMode.voice
+                                    ? (_isRecording
+                                        ? IOSIcons.stop
+                                        : IOSIcons.mic)
+                                    : IOSIcons.videoCam,
+                                color: _recordMode == RecordMode.video
+                                    ? Theme.of(context).colorScheme.primary
+                                    : (_isRecording
+                                        ? Colors.redAccent
+                                        : Theme.of(context).iconTheme.color),
+                              ),
+                            ),
+                          ),
+                        ],
+                        if (_hasText) ...[
+                          const SizedBox(width: 6),
+                          Container(
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: theme.colorScheme.primary,
+                            ),
+                            child: IconButton(
+                              onPressed: _isSending
+                                  ? null
+                                  : () => _send(currentUserId),
+                              icon: _isSending
+                                  ? const SizedBox(
+                                      width: 18,
+                                      height: 18,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                        valueColor:
+                                            AlwaysStoppedAnimation<Color>(
+                                                Colors.white),
+                                      ),
+                                    )
+                                  : const Icon(
+                                      IOSIcons.send,
+                                      size: 18,
+                                      color: Colors.white,
+                                    ),
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                ],
               ),
             ),
           ),
@@ -677,7 +904,13 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
           chatId: widget.chatId,
           senderId: currentUserId,
           text: text,
+          replyToMessageId: _replyTo?.id,
         );
+        if (mounted) {
+          setState(() {
+            _replyTo = null;
+          });
+        }
       } on Exception {
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
@@ -760,7 +993,13 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
             chatId: widget.chatId,
             senderId: currentUserId,
             audioUrl: url,
+            replyToMessageId: _replyTo?.id,
           );
+          if (mounted) {
+            setState(() {
+              _replyTo = null;
+            });
+          }
         });
       }
     } catch (_) {
@@ -812,7 +1051,13 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
           chatId: widget.chatId,
           senderId: currentUserId,
           videoUrl: url,
+          replyToMessageId: _replyTo?.id,
         );
+        if (mounted) {
+          setState(() {
+            _replyTo = null;
+          });
+        }
       });
     } catch (_) {
       if (!mounted) return;
@@ -824,6 +1069,7 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
 
   void _showReactionsBar(String messageId, String currentUserId) {
     final controller = TextEditingController();
+    final quick = <String>['👍', '❤️', '😂', '😮', '😢', '🙏'];
 
     showModalBottomSheet<void>(
       context: context,
@@ -856,16 +1102,41 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Flexible(
+                    for (final emoji in quick)
+                      InkWell(
+                        borderRadius: BorderRadius.circular(999),
+                        onTap: () async {
+                          Navigator.of(ctx).pop();
+                          await ChatService.instance.toggleReaction(
+                            chatId: widget.chatId,
+                            messageId: messageId,
+                            userId: currentUserId,
+                            emoji: emoji,
+                          );
+                        },
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 6,
+                          ),
+                          child: Text(
+                            emoji,
+                            style: const TextStyle(fontSize: 22),
+                          ),
+                        ),
+                      ),
+                    const SizedBox(width: 6),
+                    ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 120),
                       child: TextField(
                         controller: controller,
                         autofocus: true,
                         textAlign: TextAlign.center,
-                        style: const TextStyle(fontSize: 22),
+                        style: const TextStyle(fontSize: 18),
                         decoration: const InputDecoration(
                           isDense: true,
                           border: InputBorder.none,
-                          hintText: 'Choose emoji',
+                          hintText: 'More',
                         ),
                         onSubmitted: (value) async {
                           final emoji = value.trim();
@@ -883,7 +1154,6 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
                         },
                       ),
                     ),
-                    const SizedBox(width: 8),
                     IconButton(
                       icon: const Icon(IOSIcons.checkCircleOutlined),
                       color: theme.colorScheme.primary,
@@ -925,6 +1195,7 @@ class _ChatBubble extends StatelessWidget {
   final String currentUserId;
   final String? senderPhotoUrl;
   final VoidCallback? onLongPress;
+  final VoidCallback? onDoubleTap;
 
   const _ChatBubble({
     required this.message,
@@ -933,6 +1204,7 @@ class _ChatBubble extends StatelessWidget {
     required this.currentUserId,
     required this.senderPhotoUrl,
     this.onLongPress,
+    this.onDoubleTap,
   });
 
   @override
@@ -956,6 +1228,7 @@ class _ChatBubble extends StatelessWidget {
       children: [
         GestureDetector(
           onLongPress: onLongPress,
+          onDoubleTap: onDoubleTap,
           child: Container(
             constraints: const BoxConstraints(maxWidth: 320),
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
@@ -1065,81 +1338,110 @@ class _ChatBubble extends StatelessWidget {
   }
 
   Widget _buildContent(BuildContext context, Color textColor) {
+    final quoted = _buildQuotedBlock(context, textColor);
     switch (message.type) {
       case ChatMessageType.gif:
         if (message.mediaUrl == null || message.mediaUrl!.isEmpty) {
           return const Text('GIF');
         }
-        return ClipRRect(
-          borderRadius: BorderRadius.circular(12),
-          child: SafeNetworkImage(
-            url: message.mediaUrl,
-            fit: BoxFit.cover,
-          ),
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (quoted != null) ...[quoted, const SizedBox(height: 8)],
+            ClipRRect(
+              borderRadius: BorderRadius.circular(12),
+              child: SafeNetworkImage(
+                url: message.mediaUrl,
+                fit: BoxFit.cover,
+              ),
+            ),
+          ],
         );
       case ChatMessageType.image:
         if (message.mediaUrl == null || message.mediaUrl!.isEmpty) {
           return const Text('Image');
         }
-        return ClipRRect(
-          borderRadius: BorderRadius.circular(12),
-          child: SafeNetworkImage(
-            url: message.mediaUrl,
-            fit: BoxFit.cover,
-          ),
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (quoted != null) ...[quoted, const SizedBox(height: 8)],
+            ClipRRect(
+              borderRadius: BorderRadius.circular(12),
+              child: SafeNetworkImage(
+                url: message.mediaUrl,
+                fit: BoxFit.cover,
+              ),
+            ),
+          ],
         );
       case ChatMessageType.video:
         if (message.mediaUrl == null || message.mediaUrl!.isEmpty) {
           return const Text('Video');
         }
-        return GestureDetector(
-          onTap: () {
-            Navigator.of(context).push(
-              MaterialPageRoute(
-                builder: (_) => VideoPlayerScreen(url: message.mediaUrl!),
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (quoted != null) ...[quoted, const SizedBox(height: 8)],
+            GestureDetector(
+              onTap: () {
+                Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => VideoPlayerScreen(url: message.mediaUrl!),
+                  ),
+                );
+              },
+              child: Stack(
+                alignment: Alignment.center,
+                children: [
+                  AspectRatio(
+                    aspectRatio: 16 / 9,
+                    child: SafeNetworkImage(
+                      url: message.mediaUrl,
+                      fit: BoxFit.cover,
+                    ),
+                  ),
+                  Container(
+                    decoration: BoxDecoration(
+                      color: Colors.black45,
+                      shape: BoxShape.circle,
+                    ),
+                    padding: const EdgeInsets.all(8),
+                    child: const Icon(
+                      IOSIcons.play,
+                      color: Colors.white,
+                      size: 28,
+                    ),
+                  ),
+                ],
               ),
-            );
-          },
-          child: Stack(
-            alignment: Alignment.center,
-            children: [
-              AspectRatio(
-                aspectRatio: 16 / 9,
-                child: SafeNetworkImage(
-                  url: message.mediaUrl,
-                  fit: BoxFit.cover,
-                ),
-              ),
-              Container(
-                decoration: BoxDecoration(
-                  color: Colors.black45,
-                  shape: BoxShape.circle,
-                ),
-                padding: const EdgeInsets.all(8),
-                child: const Icon(
-                  IOSIcons.play,
-                  color: Colors.white,
-                  size: 28,
-                ),
-              ),
-            ],
-          ),
+            ),
+          ],
         );
       case ChatMessageType.file:
-        return Row(
+        return Column(
           mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Icon(IOSIcons.document, size: 18),
-            const SizedBox(width: 6),
-            Flexible(
-              child: Text(
-                'File',
-                style: TextStyle(
-                  color: textColor,
-                  height: 1.25,
+            if (quoted != null) ...[quoted, const SizedBox(height: 8)],
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(IOSIcons.document, size: 18),
+                const SizedBox(width: 6),
+                Flexible(
+                  child: Text(
+                    'File',
+                    style: TextStyle(
+                      color: textColor,
+                      height: 1.25,
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                  ),
                 ),
-                overflow: TextOverflow.ellipsis,
-              ),
+              ],
             ),
           ],
         );
@@ -1147,16 +1449,199 @@ class _ChatBubble extends StatelessWidget {
         if (message.mediaUrl == null || message.mediaUrl!.isEmpty) {
           return const Text('Voice message');
         }
-        return VoiceMessagePlayer(url: message.mediaUrl!);
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (quoted != null) ...[quoted, const SizedBox(height: 8)],
+            VoiceMessagePlayer(url: message.mediaUrl!),
+          ],
+        );
       case ChatMessageType.text:
-        return Text(
-          message.text ?? '',
-          style: TextStyle(
-            color: textColor,
-            height: 1.25,
-          ),
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (quoted != null) ...[quoted, const SizedBox(height: 8)],
+            Text(
+              message.text ?? '',
+              style: TextStyle(
+                color: textColor,
+                height: 1.25,
+              ),
+            ),
+          ],
         );
     }
+  }
+
+  Widget? _buildQuotedBlock(BuildContext context, Color textColor) {
+    if (message.replyToMessageId == null || message.replyToMessageId!.isEmpty) {
+      return null;
+    }
+
+    final theme = Theme.of(context);
+
+    final who = (message.replyToSenderUsername?.trim().isNotEmpty ?? false)
+        ? message.replyToSenderUsername!.trim()
+        : 'User';
+
+    String preview = '';
+    final t = message.replyToType;
+    if (t == ChatMessageType.text) {
+      preview = (message.replyToText ?? '').trim();
+      if (preview.isEmpty) preview = 'Message';
+    } else if (t == ChatMessageType.image) {
+      preview = 'Photo';
+    } else if (t == ChatMessageType.video) {
+      preview = 'Video';
+    } else if (t == ChatMessageType.voice) {
+      preview = 'Voice message';
+    } else if (t == ChatMessageType.gif) {
+      preview = 'GIF';
+    } else if (t == ChatMessageType.file) {
+      preview = 'File';
+    } else {
+      preview = 'Message';
+    }
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.onSurface.withOpacity(0.08),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 3,
+            height: 32,
+            decoration: BoxDecoration(
+              color: theme.colorScheme.primary.withOpacity(0.85),
+              borderRadius: BorderRadius.circular(999),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Flexible(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  who,
+                  overflow: TextOverflow.ellipsis,
+                  style: theme.textTheme.labelMedium?.copyWith(
+                    fontWeight: FontWeight.w700,
+                    color: textColor.withOpacity(0.9),
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  preview,
+                  overflow: TextOverflow.ellipsis,
+                  maxLines: 1,
+                  style: theme.textTheme.labelSmall?.copyWith(
+                    color: textColor.withOpacity(0.8),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ReplyPreviewBar extends StatelessWidget {
+  final ChatMessage message;
+  final VoidCallback onCancel;
+
+  const _ReplyPreviewBar({
+    required this.message,
+    required this.onCancel,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    String label = '';
+    switch (message.type) {
+      case ChatMessageType.text:
+        label = (message.text ?? '').trim();
+        if (label.isEmpty) label = 'Message';
+        break;
+      case ChatMessageType.image:
+        label = 'Photo';
+        break;
+      case ChatMessageType.video:
+        label = 'Video';
+        break;
+      case ChatMessageType.voice:
+        label = 'Voice message';
+        break;
+      case ChatMessageType.gif:
+        label = 'GIF';
+        break;
+      case ChatMessageType.file:
+        label = 'File';
+        break;
+    }
+
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 10, 8, 10),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surface,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: theme.colorScheme.onSurface.withOpacity(0.08),
+        ),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 3,
+            height: 34,
+            decoration: BoxDecoration(
+              color: theme.colorScheme.primary,
+              borderRadius: BorderRadius.circular(999),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  'Replying to ${message.senderUsername.isNotEmpty ? message.senderUsername : 'User'}',
+                  overflow: TextOverflow.ellipsis,
+                  style: theme.textTheme.labelMedium?.copyWith(
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  label,
+                  overflow: TextOverflow.ellipsis,
+                  maxLines: 1,
+                  style: theme.textTheme.labelSmall?.copyWith(
+                    color: theme.colorScheme.onSurface.withOpacity(0.75),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          IconButton(
+            onPressed: onCancel,
+            icon: const Icon(IOSIcons.close, size: 18),
+            tooltip: 'Cancel reply',
+          ),
+        ],
+      ),
+    );
   }
 }
 

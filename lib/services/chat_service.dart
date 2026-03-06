@@ -69,6 +69,18 @@ class ChatService {
     return controller.stream;
   }
 
+  Future<Chat?> fetchChatOnce({required String chatId}) async {
+    if (!_isBackendChatId(chatId)) return null;
+    final rows = await AuthService.instance.api.getListOfMaps('/api/chats');
+    for (final row in rows) {
+      final id = row['id']?.toString();
+      if (id == chatId) {
+        return Chat.fromJson(row);
+      }
+    }
+    return null;
+  }
+
   bool _typingEqual(Map<String, bool> a, Map<String, bool> b) {
     if (identical(a, b)) return true;
     if (a.length != b.length) return false;
@@ -322,6 +334,7 @@ class ChatService {
     required String chatId,
     required String senderId,
     required String text,
+    String? replyToMessageId,
   }) async {
     if (!_isBackendChatId(chatId)) return;
     final trimmed = text.trim();
@@ -331,6 +344,8 @@ class ChatService {
       body: {
         'type': 'text',
         'text': trimmed,
+        if (replyToMessageId != null && replyToMessageId.trim().isNotEmpty)
+          'replyToMessageId': int.tryParse(replyToMessageId.trim()),
       },
     );
   }
@@ -339,6 +354,7 @@ class ChatService {
     required String chatId,
     required String senderId,
     required String gifUrl,
+    String? replyToMessageId,
   }) async {
     if (!_isBackendChatId(chatId)) return;
     if (gifUrl.isEmpty) return;
@@ -347,6 +363,8 @@ class ChatService {
       body: {
         'type': 'gif',
         'mediaUrl': gifUrl,
+        if (replyToMessageId != null && replyToMessageId.trim().isNotEmpty)
+          'replyToMessageId': int.tryParse(replyToMessageId.trim()),
       },
     );
     //       createdAt: DateTime.now(),
@@ -365,6 +383,7 @@ class ChatService {
     required String chatId,
     required String senderId,
     required String imageUrl,
+    String? replyToMessageId,
   }) async {
     if (!_isBackendChatId(chatId)) return;
     await _sendMedia(
@@ -373,6 +392,7 @@ class ChatService {
       type: ChatMessageType.image,
       mediaUrl: imageUrl,
       lastMessageLabel: 'Photo',
+      replyToMessageId: replyToMessageId,
     );
   }
 
@@ -380,6 +400,7 @@ class ChatService {
     required String chatId,
     required String senderId,
     required String videoUrl,
+    String? replyToMessageId,
   }) async {
     if (!_isBackendChatId(chatId)) return;
     await _sendMedia(
@@ -388,6 +409,7 @@ class ChatService {
       type: ChatMessageType.video,
       mediaUrl: videoUrl,
       lastMessageLabel: 'Video',
+      replyToMessageId: replyToMessageId,
     );
   }
 
@@ -395,6 +417,7 @@ class ChatService {
     required String chatId,
     required String senderId,
     required String fileUrl,
+    String? replyToMessageId,
   }) async {
     if (!_isBackendChatId(chatId)) return;
     await _sendMedia(
@@ -403,6 +426,7 @@ class ChatService {
       type: ChatMessageType.file,
       mediaUrl: fileUrl,
       lastMessageLabel: 'File',
+      replyToMessageId: replyToMessageId,
     );
   }
 
@@ -410,6 +434,7 @@ class ChatService {
     required String chatId,
     required String senderId,
     required String audioUrl,
+    String? replyToMessageId,
   }) async {
     if (!_isBackendChatId(chatId)) return;
     await _sendMedia(
@@ -418,6 +443,7 @@ class ChatService {
       type: ChatMessageType.voice,
       mediaUrl: audioUrl,
       lastMessageLabel: 'Voice message',
+      replyToMessageId: replyToMessageId,
     );
   }
 
@@ -463,6 +489,7 @@ class ChatService {
     required ChatMessageType type,
     required String mediaUrl,
     required String lastMessageLabel,
+    String? replyToMessageId,
   }) async {
     if (!_isBackendChatId(chatId)) return;
     if (mediaUrl.isEmpty) return;
@@ -479,6 +506,8 @@ class ChatService {
       body: {
         'type': typeStr,
         'mediaUrl': mediaUrl,
+        if (replyToMessageId != null && replyToMessageId.trim().isNotEmpty)
+          'replyToMessageId': int.tryParse(replyToMessageId.trim()),
       },
     );
     // final msgRef = _chatsRef.doc(chatId).collection('messages').doc();
@@ -536,5 +565,24 @@ class ChatService {
 
     //   await tx.update(msgRef, {'reactions': ChatMessage._encodeReactions(reactions)});
     // });
+  }
+
+  Future<void> pinMessage({
+    required String chatId,
+    required String messageId,
+  }) async {
+    if (!_isBackendChatId(chatId)) return;
+    await AuthService.instance.api.postNoContent(
+      '/api/chats/$chatId/pin/$messageId',
+    );
+  }
+
+  Future<void> unpinMessage({
+    required String chatId,
+  }) async {
+    if (!_isBackendChatId(chatId)) return;
+    await AuthService.instance.api.deleteNoContent(
+      '/api/chats/$chatId/pin',
+    );
   }
 }

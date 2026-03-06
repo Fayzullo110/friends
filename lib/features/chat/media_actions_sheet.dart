@@ -10,8 +10,13 @@ import 'gif_picker_sheet.dart';
 
 class MediaActionsSheet extends StatefulWidget {
   final String chatId;
+  final String? replyToMessageId;
 
-  const MediaActionsSheet({super.key, required this.chatId});
+  const MediaActionsSheet({
+    super.key,
+    required this.chatId,
+    this.replyToMessageId,
+  });
 
   @override
   State<MediaActionsSheet> createState() => _MediaActionsSheetState();
@@ -179,6 +184,7 @@ class _MediaActionsSheetState extends State<MediaActionsSheet> {
                                   chatId: widget.chatId,
                                   senderId: me.id,
                                   gifUrl: gif.originalUrl,
+                                  replyToMessageId: widget.replyToMessageId,
                                 );
                               },
                             ),
@@ -218,6 +224,7 @@ class _MediaActionsSheetState extends State<MediaActionsSheet> {
         chatId: widget.chatId,
         senderId: me.id,
         imageUrl: downloadUrl,
+        replyToMessageId: widget.replyToMessageId,
       );
       if (!mounted) return;
       Navigator.of(context).pop();
@@ -246,6 +253,7 @@ class _MediaActionsSheetState extends State<MediaActionsSheet> {
         chatId: widget.chatId,
         senderId: me.id,
         videoUrl: downloadUrl,
+        replyToMessageId: widget.replyToMessageId,
       );
       if (!mounted) return;
       Navigator.of(context).pop();
@@ -276,6 +284,7 @@ class _MediaActionsSheetState extends State<MediaActionsSheet> {
         chatId: widget.chatId,
         senderId: me.id,
         fileUrl: downloadUrl,
+        replyToMessageId: widget.replyToMessageId,
       );
       if (!mounted) return;
       Navigator.of(context).pop();
@@ -309,6 +318,7 @@ class _MediaActionsSheetState extends State<MediaActionsSheet> {
         chatId: widget.chatId,
         senderId: me.id,
         audioUrl: downloadUrl,
+        replyToMessageId: widget.replyToMessageId,
       );
       if (!mounted) return;
       Navigator.of(context).pop();

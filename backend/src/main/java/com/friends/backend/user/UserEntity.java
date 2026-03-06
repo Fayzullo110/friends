@@ -54,6 +54,12 @@ public class UserEntity {
   @Column(name = "last_active_at")
   private Instant lastActiveAt;
 
+  @Column(name = "is_private_account", nullable = false)
+  private Boolean isPrivateAccount = false;
+
+  @Column(name = "comment_policy", nullable = false)
+  private String commentPolicy = "everyone";
+
   @PrePersist
   void onCreate() {
     final Instant now = Instant.now();
@@ -172,5 +178,21 @@ public class UserEntity {
 
   public void setLastActiveAt(Instant lastActiveAt) {
     this.lastActiveAt = lastActiveAt;
+  }
+
+  public Boolean getIsPrivateAccount() {
+    return isPrivateAccount;
+  }
+
+  public void setIsPrivateAccount(Boolean isPrivateAccount) {
+    this.isPrivateAccount = isPrivateAccount;
+  }
+
+  public String getCommentPolicy() {
+    return commentPolicy;
+  }
+
+  public void setCommentPolicy(String commentPolicy) {
+    this.commentPolicy = commentPolicy;
   }
 }

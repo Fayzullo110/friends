@@ -126,7 +126,10 @@ public class ChatController {
     requireMember(chatId, authentication);
     final int safeLimit = Math.min(200, Math.max(1, limit));
     final int safeOffset = Math.max(0, offset);
-    return chatMessageRepository.findRecent(chatId, safeLimit, safeOffset).stream().map(this::toMessageResponse).toList();
+
+    final List<ChatMessageEntity> pageRows = chatMessageRepository.findRecent(chatId, safeLimit, safeOffset);
+    final MessagePrefetch prefetch = prefetchMessages(pageRows);
+    return pageRows.stream().map(m -> toMessageResponse(m, prefetch)).toList();
   }
 
   @GetMapping("/{chatId}/messages/paged")
@@ -143,7 +146,9 @@ public class ChatController {
     final List<ChatMessageEntity> rows = chatMessageRepository.findRecent(chatId, safeLimit + 1, safeOffset);
     final boolean hasMore = rows.size() > safeLimit;
     final List<ChatMessageEntity> pageRows = hasMore ? rows.subList(0, safeLimit) : rows;
-    final List<ChatMessageResponse> items = pageRows.stream().map(this::toMessageResponse).toList();
+
+    final MessagePrefetch prefetch = prefetchMessages(pageRows);
+    final List<ChatMessageResponse> items = pageRows.stream().map(m -> toMessageResponse(m, prefetch)).toList();
 
     return new PagedResponse<>(items, hasMore, null, hasMore ? safeOffset + safeLimit : null);
   }
@@ -157,6 +162,7 @@ public class ChatController {
     final String type = req.type == null || req.type.trim().isEmpty() ? "text" : req.type.trim();
     final String text = req.text == null ? null : req.text.trim();
     final String mediaUrl = req.mediaUrl == null ? null : req.mediaUrl.trim();
+    final Long replyToMessageId = req == null ? null : req.replyToMessageId;
 
     if (type.equals("text")) {
       if (text == null || text.isEmpty()) {
@@ -174,6 +180,15 @@ public class ChatController {
     m.setType(type);
     m.setText(text);
     m.setMediaUrl(mediaUrl);
+
+    if (replyToMessageId != null) {
+      final ChatMessageEntity target = chatMessageRepository.findById(replyToMessageId).orElse(null);
+      if (target == null || target.getChatId() == null || target.getChatId() != chatId) {
+        throw new IllegalArgumentException("Invalid replyToMessageId");
+      }
+      m.setReplyToMessageId(replyToMessageId);
+    }
+
     final ChatMessageEntity saved = chatMessageRepository.save(m);
 
     chatMessageSeenRepository.save(new ChatMessageSeenEntity(new ChatMessageSeenId(saved.getId(), me)));
@@ -184,7 +199,8 @@ public class ChatController {
     chat.setUpdatedAt(Instant.now());
     chatRepository.save(chat);
 
-    return toMessageResponse(saved);
+    final MessagePrefetch prefetch = prefetchMessages(List.of(saved));
+    return toMessageResponse(saved, prefetch);
   }
 
   @PostMapping("/{chatId}/messages/seen")
@@ -205,6 +221,38 @@ public class ChatController {
     }
 
     return ResponseEntity.noContent().build();
+  }
+
+  @PostMapping("/{chatId}/pin/{messageId}")
+  public ChatResponse pinMessage(
+      @PathVariable long chatId,
+      @PathVariable long messageId,
+      Authentication authentication) {
+    requireMember(chatId, authentication);
+
+    final ChatMessageEntity target = chatMessageRepository.findById(messageId).orElse(null);
+    if (target == null || target.getChatId() == null || target.getChatId() != chatId) {
+      throw new IllegalArgumentException("Message not found in this chat");
+    }
+
+    final ChatEntity chat = chatRepository.findById(chatId)
+        .orElseThrow(() -> new IllegalArgumentException("Chat not found"));
+    chat.setPinnedMessageId(messageId);
+    chat.setUpdatedAt(Instant.now());
+    final ChatEntity saved = chatRepository.save(chat);
+    return toChatResponse(saved);
+  }
+
+  @DeleteMapping("/{chatId}/pin")
+  public ChatResponse unpinMessage(@PathVariable long chatId, Authentication authentication) {
+    requireMember(chatId, authentication);
+
+    final ChatEntity chat = chatRepository.findById(chatId)
+        .orElseThrow(() -> new IllegalArgumentException("Chat not found"));
+    chat.setPinnedMessageId(null);
+    chat.setUpdatedAt(Instant.now());
+    final ChatEntity saved = chatRepository.save(chat);
+    return toChatResponse(saved);
   }
 
   @PostMapping("/{chatId}/typing")
@@ -289,15 +337,80 @@ public class ChatController {
         memberUsernames,
         memberPhotoUrls,
         c.getLastMessage(),
+        c.getPinnedMessageId(),
         c.getUpdatedAt(),
         c.isGroup(),
         c.getTitle());
   }
 
-  private ChatMessageResponse toMessageResponse(ChatMessageEntity m) {
-    final UserEntity sender = userRepository.findById(m.getSenderId()).orElse(null);
+  private record MessagePrefetch(
+      Map<Long, ChatMessageEntity> messagesById,
+      Map<Long, UserEntity> usersById) {}
+
+  private MessagePrefetch prefetchMessages(List<ChatMessageEntity> messages) {
+    final Set<Long> messageIds = new LinkedHashSet<>();
+    final Set<Long> replyIds = new LinkedHashSet<>();
+    final Set<Long> userIds = new LinkedHashSet<>();
+
+    for (final ChatMessageEntity m : messages) {
+      if (m == null) continue;
+      if (m.getId() != null) messageIds.add(m.getId());
+      if (m.getSenderId() != null) userIds.add(m.getSenderId());
+      if (m.getReplyToMessageId() != null) replyIds.add(m.getReplyToMessageId());
+    }
+
+    final Map<Long, ChatMessageEntity> messagesById = new HashMap<>();
+    if (!replyIds.isEmpty()) {
+      for (final ChatMessageEntity rm : chatMessageRepository.findAllById(replyIds)) {
+        if (rm != null && rm.getId() != null) {
+          messagesById.put(rm.getId(), rm);
+          if (rm.getSenderId() != null) userIds.add(rm.getSenderId());
+        }
+      }
+    }
+
+    final Map<Long, UserEntity> usersById = new HashMap<>();
+    if (!userIds.isEmpty()) {
+      for (final UserEntity u : userRepository.findAllById(userIds)) {
+        if (u != null && u.getId() != null) usersById.put(u.getId(), u);
+      }
+    }
+
+    return new MessagePrefetch(messagesById, usersById);
+  }
+
+  private ChatMessageResponse toMessageResponse(ChatMessageEntity m, MessagePrefetch prefetch) {
+    final UserEntity sender = prefetch == null
+        ? userRepository.findById(m.getSenderId()).orElse(null)
+        : prefetch.usersById().get(m.getSenderId());
     final String senderUsername = sender == null ? "user" : sender.getUsername();
     final String senderPhotoUrl = sender == null ? null : sender.getPhotoUrl();
+
+    Long replyToMessageId = m.getReplyToMessageId();
+    Long replyToSenderId = null;
+    String replyToSenderUsername = null;
+    String replyToType = null;
+    String replyToText = null;
+    String replyToMediaUrl = null;
+
+    if (replyToMessageId != null) {
+      final ChatMessageEntity rm = prefetch == null
+          ? chatMessageRepository.findById(replyToMessageId).orElse(null)
+          : prefetch.messagesById().get(replyToMessageId);
+      if (rm != null) {
+        replyToSenderId = rm.getSenderId();
+        replyToType = rm.getType();
+        replyToText = rm.getText();
+        replyToMediaUrl = rm.getMediaUrl();
+
+        if (replyToSenderId != null) {
+          final UserEntity ru = prefetch == null
+              ? userRepository.findById(replyToSenderId).orElse(null)
+              : prefetch.usersById().get(replyToSenderId);
+          replyToSenderUsername = ru == null ? null : ru.getUsername();
+        }
+      }
+    }
 
     final List<Long> seenBy = chatMessageSeenRepository.findUserIdsWhoSaw(m.getId());
 
@@ -317,6 +430,12 @@ public class ChatController {
         m.getType(),
         m.getText(),
         m.getMediaUrl(),
+        replyToMessageId,
+        replyToSenderId,
+        replyToSenderUsername,
+        replyToType,
+        replyToText,
+        replyToMediaUrl,
         m.getCreatedAt(),
         reactions,
         seenBy);

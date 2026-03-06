@@ -6,7 +6,7 @@ import '../../theme/ios_icons.dart';
 import '../notifications/notifications_screen.dart';
 import 'edit_profile_screen.dart';
 import 'change_password_screen.dart';
-import 'blocked_users_screen.dart';
+import 'privacy_safety_screen.dart';
 import 'archived_posts_screen.dart';
 import 'archived_reels_screen.dart';
 
@@ -87,7 +87,7 @@ class SettingsScreen extends StatelessWidget {
 
                   Navigator.of(context).push(
                     MaterialPageRoute(
-                      builder: (_) => const BlockedUsersScreen(),
+                      builder: (_) => const PrivacySafetyScreen(),
                     ),
                   );
                 },

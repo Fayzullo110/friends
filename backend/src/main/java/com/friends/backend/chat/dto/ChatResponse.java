@@ -10,6 +10,7 @@ public class ChatResponse {
   public Map<Long, String> memberUsernames;
   public Map<Long, String> memberPhotoUrls;
   public String lastMessage;
+  public Long pinnedMessageId;
   public long updatedAt;
   public boolean isGroup;
   public String title;
@@ -20,6 +21,7 @@ public class ChatResponse {
       Map<Long, String> memberUsernames,
       Map<Long, String> memberPhotoUrls,
       String lastMessage,
+      Long pinnedMessageId,
       Instant updatedAt,
       boolean isGroup,
       String title) {
@@ -28,6 +30,7 @@ public class ChatResponse {
     this.memberUsernames = memberUsernames;
     this.memberPhotoUrls = memberPhotoUrls;
     this.lastMessage = lastMessage;
+    this.pinnedMessageId = pinnedMessageId;
     this.updatedAt = updatedAt == null ? 0L : updatedAt.toEpochMilli();
     this.isGroup = isGroup;
     this.title = title;

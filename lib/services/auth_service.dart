@@ -232,6 +232,23 @@ class AuthService {
     _userController.add(updated);
   }
 
+  Future<void> updatePrivacySafety({
+    bool? isPrivateAccount,
+    String? commentPolicy,
+  }) async {
+    if (_currentUser == null) return;
+    final updated = await _api.patchJson(
+      '/api/users/me',
+      {
+        'isPrivateAccount': isPrivateAccount,
+        'commentPolicy': commentPolicy,
+      },
+      (json) => AppUser.fromJson(json),
+    );
+    _currentUser = updated;
+    _userController.add(updated);
+  }
+
   void dispose() {
     _userController.close();
   }

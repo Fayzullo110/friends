@@ -4,6 +4,7 @@ class Chat {
   final Map<String, String> memberUsernames;
   final Map<String, String> memberPhotoUrls;
   final String lastMessage;
+  final String? pinnedMessageId;
   final DateTime updatedAt;
   final bool isGroup;
   final String? title;
@@ -14,6 +15,7 @@ class Chat {
     required this.memberUsernames,
     required this.memberPhotoUrls,
     required this.lastMessage,
+    required this.pinnedMessageId,
     required this.updatedAt,
     required this.isGroup,
     required this.title,
@@ -32,6 +34,7 @@ class Chat {
           .map((k, v) => MapEntry(k.toString(), v?.toString() ?? ''))
           .cast<String, String>(),
       lastMessage: data['lastMessage'] as String? ?? '',
+      pinnedMessageId: data['pinnedMessageId']?.toString(),
       updatedAt: DateTime.fromMillisecondsSinceEpoch(
         (data['updatedAt'] as num?)?.toInt() ?? 0,
         isUtc: false,
@@ -48,6 +51,7 @@ class Chat {
       'memberUsernames': memberUsernames,
       'memberPhotoUrls': memberPhotoUrls,
       'lastMessage': lastMessage,
+      'pinnedMessageId': pinnedMessageId,
       'updatedAt': updatedAt.millisecondsSinceEpoch,
       'isGroup': isGroup,
       'title': title,

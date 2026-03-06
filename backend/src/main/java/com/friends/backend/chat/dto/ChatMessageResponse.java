@@ -12,6 +12,12 @@ public class ChatMessageResponse {
   public String type;
   public String text;
   public String mediaUrl;
+  public Long replyToMessageId;
+  public Long replyToSenderId;
+  public String replyToSenderUsername;
+  public String replyToType;
+  public String replyToText;
+  public String replyToMediaUrl;
   public long createdAt;
   public Map<String, List<Long>> reactions;
   public List<Long> seenBy;
@@ -24,6 +30,12 @@ public class ChatMessageResponse {
       String type,
       String text,
       String mediaUrl,
+      Long replyToMessageId,
+      Long replyToSenderId,
+      String replyToSenderUsername,
+      String replyToType,
+      String replyToText,
+      String replyToMediaUrl,
       Instant createdAt,
       Map<String, List<Long>> reactions,
       List<Long> seenBy) {
@@ -34,6 +46,12 @@ public class ChatMessageResponse {
     this.type = type;
     this.text = text;
     this.mediaUrl = mediaUrl;
+    this.replyToMessageId = replyToMessageId;
+    this.replyToSenderId = replyToSenderId;
+    this.replyToSenderUsername = replyToSenderUsername;
+    this.replyToType = replyToType;
+    this.replyToText = replyToText;
+    this.replyToMediaUrl = replyToMediaUrl;
     this.createdAt = createdAt == null ? 0L : createdAt.toEpochMilli();
     this.reactions = reactions;
     this.seenBy = seenBy;

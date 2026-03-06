@@ -1,3 +1,5 @@
+import 'story_sticker.dart';
+
 class Story {
   final String id;
   final String authorId;
@@ -14,6 +16,7 @@ class Story {
   final String? musicTitle;
   final String? musicArtist;
   final String? musicUrl;
+  final List<StorySticker> stickers;
 
   Story({
     required this.id,
@@ -31,6 +34,7 @@ class Story {
     this.musicTitle,
     this.musicArtist,
     this.musicUrl,
+    this.stickers = const [],
   });
 
   factory Story.fromJson(Map<String, dynamic> data) {
@@ -60,6 +64,10 @@ class Story {
       musicTitle: data['musicTitle'] as String?,
       musicArtist: data['musicArtist'] as String?,
       musicUrl: data['musicUrl'] as String?,
+      stickers: (data['stickers'] as List<dynamic>? ?? const [])
+          .whereType<Map<String, dynamic>>()
+          .map(StorySticker.fromJson)
+          .toList(),
     );
   }
 
@@ -80,6 +88,7 @@ class Story {
       'musicTitle': musicTitle,
       'musicArtist': musicArtist,
       'musicUrl': musicUrl,
+      'stickers': stickers.map((e) => e.toJson()).toList(),
     };
   }
 }

@@ -1,0 +1,4 @@
+com/friends/backend/story/dto/StoryStickerPollVoteRequest.class
+com/friends/backend/story/stickers/StoryStickerEmojiSliderValueId.class
+com/friends/backend/story/StoryStickerRepository.class
+com/friends/backend/story/highlights/StoryHighlightItemRepository.class

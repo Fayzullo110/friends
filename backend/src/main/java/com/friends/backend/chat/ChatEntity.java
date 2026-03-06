@@ -19,6 +19,9 @@ public class ChatEntity {
   @Column(name = "last_message", nullable = false, columnDefinition = "TEXT")
   private String lastMessage;
 
+  @Column(name = "pinned_message_id")
+  private Long pinnedMessageId;
+
   @Column(name = "created_at", nullable = false)
   private Instant createdAt;
 
@@ -45,6 +48,8 @@ public class ChatEntity {
   public void setTitle(String title) { this.title = title; }
   public String getLastMessage() { return lastMessage; }
   public void setLastMessage(String lastMessage) { this.lastMessage = lastMessage; }
+  public Long getPinnedMessageId() { return pinnedMessageId; }
+  public void setPinnedMessageId(Long pinnedMessageId) { this.pinnedMessageId = pinnedMessageId; }
   public Instant getCreatedAt() { return createdAt; }
   public Instant getUpdatedAt() { return updatedAt; }
   public void setUpdatedAt(Instant updatedAt) { this.updatedAt = updatedAt; }

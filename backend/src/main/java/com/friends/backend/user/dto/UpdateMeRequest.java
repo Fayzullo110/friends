@@ -16,4 +16,8 @@ public class UpdateMeRequest {
   public String themeKey;
 
   public Integer themeSeedColor;
+
+  public Boolean isPrivateAccount;
+
+  public String commentPolicy; // everyone | followers | no_one
 }

@@ -19,6 +19,7 @@ public class StoryResponse {
   public String musicTitle;
   public String musicArtist;
   public String musicUrl;
+  public List<StoryStickerResponse> stickers;
 
   public StoryResponse(
       long id,
@@ -35,7 +36,8 @@ public class StoryResponse {
       List<Long> likedBy,
       String musicTitle,
       String musicArtist,
-      String musicUrl) {
+      String musicUrl,
+      List<StoryStickerResponse> stickers) {
     this.id = id;
     this.authorId = authorId;
     this.authorUsername = authorUsername;
@@ -51,5 +53,6 @@ public class StoryResponse {
     this.musicTitle = musicTitle;
     this.musicArtist = musicArtist;
     this.musicUrl = musicUrl;
+    this.stickers = stickers;
   }
 }

@@ -1,5 +1,9 @@
 package com.friends.backend.comment;
 
+import com.friends.backend.block.UserBlockId;
+import com.friends.backend.block.UserBlockRepository;
+import com.friends.backend.follow.UserFollowId;
+import com.friends.backend.follow.UserFollowRepository;
 import com.friends.backend.comment.dto.CommentResponse;
 import com.friends.backend.comment.dto.CreateCommentRequest;
 import com.friends.backend.post.PostEntity;
@@ -20,18 +24,24 @@ public class CommentController {
   private final CommentDislikeRepository commentDislikeRepository;
   private final PostRepository postRepository;
   private final UserRepository userRepository;
+  private final UserFollowRepository userFollowRepository;
+  private final UserBlockRepository userBlockRepository;
 
   public CommentController(
       CommentRepository commentRepository,
       CommentLikeRepository commentLikeRepository,
       CommentDislikeRepository commentDislikeRepository,
       PostRepository postRepository,
-      UserRepository userRepository) {
+      UserRepository userRepository,
+      UserFollowRepository userFollowRepository,
+      UserBlockRepository userBlockRepository) {
     this.commentRepository = commentRepository;
     this.commentLikeRepository = commentLikeRepository;
     this.commentDislikeRepository = commentDislikeRepository;
     this.postRepository = postRepository;
     this.userRepository = userRepository;
+    this.userFollowRepository = userFollowRepository;
+    this.userBlockRepository = userBlockRepository;
   }
 
   @GetMapping
@@ -55,6 +65,29 @@ public class CommentController {
         .orElseThrow(() -> new IllegalArgumentException("Post not found"));
     if (post.getDeletedAt() != null) {
       throw new IllegalArgumentException("Post is deleted");
+    }
+
+    final UserEntity postAuthor = userRepository.findById(post.getAuthorId())
+        .orElseThrow(() -> new IllegalArgumentException("Post author not found"));
+
+    if (userBlockRepository.existsById(new UserBlockId(me.getId(), postAuthor.getId()))
+        || userBlockRepository.existsById(new UserBlockId(postAuthor.getId(), me.getId()))) {
+      throw new IllegalArgumentException("You can't comment because there is a block between you.");
+    }
+
+    final String policy = postAuthor.getCommentPolicy() == null
+        ? "everyone"
+        : postAuthor.getCommentPolicy().trim().toLowerCase();
+    if (postAuthor.getId().equals(me.getId())) {
+      // Always allow commenting on my own post.
+    } else if (policy.equals("no_one")) {
+      throw new IllegalArgumentException("Comments are disabled for this user.");
+    } else if (policy.equals("followers")) {
+      final boolean follows = userFollowRepository.existsById(
+          new UserFollowId(me.getId(), postAuthor.getId()));
+      if (!follows) {
+        throw new IllegalArgumentException("Only followers can comment.");
+      }
     }
 
     final String type = req.type == null || req.type.trim().isEmpty() ? "text" : req.type.trim();

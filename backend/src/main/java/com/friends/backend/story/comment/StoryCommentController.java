@@ -1,5 +1,9 @@
 package com.friends.backend.story.comment;
 
+import com.friends.backend.block.UserBlockId;
+import com.friends.backend.block.UserBlockRepository;
+import com.friends.backend.follow.UserFollowId;
+import com.friends.backend.follow.UserFollowRepository;
 import com.friends.backend.security.UserPrincipal;
 import com.friends.backend.story.StoryEntity;
 import com.friends.backend.story.StoryRepository;
@@ -19,14 +23,20 @@ public class StoryCommentController {
   private final StoryCommentRepository storyCommentRepository;
   private final StoryRepository storyRepository;
   private final UserRepository userRepository;
+  private final UserFollowRepository userFollowRepository;
+  private final UserBlockRepository userBlockRepository;
 
   public StoryCommentController(
       StoryCommentRepository storyCommentRepository,
       StoryRepository storyRepository,
-      UserRepository userRepository) {
+      UserRepository userRepository,
+      UserFollowRepository userFollowRepository,
+      UserBlockRepository userBlockRepository) {
     this.storyCommentRepository = storyCommentRepository;
     this.storyRepository = storyRepository;
     this.userRepository = userRepository;
+    this.userFollowRepository = userFollowRepository;
+    this.userBlockRepository = userBlockRepository;
   }
 
   @GetMapping
@@ -48,6 +58,29 @@ public class StoryCommentController {
 
     final StoryEntity story = storyRepository.findById(storyId)
         .orElseThrow(() -> new IllegalArgumentException("Story not found"));
+
+    final UserEntity storyAuthor = userRepository.findById(story.getAuthorId())
+        .orElseThrow(() -> new IllegalArgumentException("Story author not found"));
+
+    if (userBlockRepository.existsById(new UserBlockId(me.getId(), storyAuthor.getId()))
+        || userBlockRepository.existsById(new UserBlockId(storyAuthor.getId(), me.getId()))) {
+      throw new IllegalArgumentException("You can't comment because there is a block between you.");
+    }
+
+    final String policy = storyAuthor.getCommentPolicy() == null
+        ? "everyone"
+        : storyAuthor.getCommentPolicy().trim().toLowerCase();
+    if (storyAuthor.getId().equals(me.getId())) {
+      // Always allow commenting on my own story.
+    } else if (policy.equals("no_one")) {
+      throw new IllegalArgumentException("Comments are disabled for this user.");
+    } else if (policy.equals("followers")) {
+      final boolean follows = userFollowRepository.existsById(
+          new UserFollowId(me.getId(), storyAuthor.getId()));
+      if (!follows) {
+        throw new IllegalArgumentException("Only followers can comment.");
+      }
+    }
 
     final StoryCommentEntity c = new StoryCommentEntity();
     c.setStoryId(storyId);

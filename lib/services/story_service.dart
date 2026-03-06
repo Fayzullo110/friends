@@ -2,6 +2,7 @@ import 'dart:async';
 
 import '../models/story.dart';
 import '../models/story_comment.dart';
+import '../models/story_sticker.dart';
 import 'auth_service.dart';
 
 class StoryService {
@@ -64,6 +65,7 @@ class StoryService {
     String? musicTitle,
     String? musicArtist,
     String? musicUrl,
+    List<StorySticker>? stickers,
   }) async {
     await AuthService.instance.api.postNoContent(
       '/api/stories',
@@ -73,6 +75,16 @@ class StoryService {
         'musicTitle': musicTitle,
         'musicArtist': musicArtist,
         'musicUrl': musicUrl,
+        'stickers': (stickers ?? const [])
+            .map(
+              (s) => {
+                'type': s.type,
+                'posX': s.posX,
+                'posY': s.posY,
+                'dataJson': s.dataJson,
+              },
+            )
+            .toList(),
       },
     );
   }
@@ -86,6 +98,7 @@ class StoryService {
     String? musicTitle,
     String? musicArtist,
     String? musicUrl,
+    List<StorySticker>? stickers,
   }) async {
     await AuthService.instance.api.postNoContent(
       '/api/stories',
@@ -96,6 +109,55 @@ class StoryService {
         'musicTitle': musicTitle,
         'musicArtist': musicArtist,
         'musicUrl': musicUrl,
+        'stickers': (stickers ?? const [])
+            .map(
+              (s) => {
+                'type': s.type,
+                'posX': s.posX,
+                'posY': s.posY,
+                'dataJson': s.dataJson,
+              },
+            )
+            .toList(),
+      },
+    );
+  }
+
+  Future<void> votePollSticker({
+    required String storyId,
+    required String stickerId,
+    required int optionIndex,
+  }) async {
+    await AuthService.instance.api.postNoContent(
+      '/api/stories/$storyId/stickers/$stickerId/poll-vote',
+      body: {
+        'optionIndex': optionIndex,
+      },
+    );
+  }
+
+  Future<void> answerQuestionSticker({
+    required String storyId,
+    required String stickerId,
+    required String answerText,
+  }) async {
+    await AuthService.instance.api.postNoContent(
+      '/api/stories/$storyId/stickers/$stickerId/question-answer',
+      body: {
+        'answerText': answerText,
+      },
+    );
+  }
+
+  Future<void> setEmojiSliderStickerValue({
+    required String storyId,
+    required String stickerId,
+    required int value,
+  }) async {
+    await AuthService.instance.api.postNoContent(
+      '/api/stories/$storyId/stickers/$stickerId/emoji-slider',
+      body: {
+        'value': value,
       },
     );
   }

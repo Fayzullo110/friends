@@ -25,6 +25,9 @@ public class ChatMessageEntity {
   @Column(name = "media_url", columnDefinition = "TEXT")
   private String mediaUrl;
 
+  @Column(name = "reply_to_message_id")
+  private Long replyToMessageId;
+
   @Column(name = "created_at", nullable = false)
   private Instant createdAt;
 
@@ -44,5 +47,7 @@ public class ChatMessageEntity {
   public void setText(String text) { this.text = text; }
   public String getMediaUrl() { return mediaUrl; }
   public void setMediaUrl(String mediaUrl) { this.mediaUrl = mediaUrl; }
+  public Long getReplyToMessageId() { return replyToMessageId; }
+  public void setReplyToMessageId(Long replyToMessageId) { this.replyToMessageId = replyToMessageId; }
   public Instant getCreatedAt() { return createdAt; }
 }

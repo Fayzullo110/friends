@@ -84,6 +84,18 @@ public class UserService {
       user.setThemeSeedColor(req.themeSeedColor);
     }
 
+    if (req.isPrivateAccount != null) {
+      user.setIsPrivateAccount(req.isPrivateAccount);
+    }
+
+    if (req.commentPolicy != null) {
+      final String policy = req.commentPolicy.trim().toLowerCase();
+      if (!(policy.equals("everyone") || policy.equals("followers") || policy.equals("no_one"))) {
+        throw new IllegalArgumentException("Invalid commentPolicy");
+      }
+      user.setCommentPolicy(policy);
+    }
+
     return userRepository.save(user);
   }
 }

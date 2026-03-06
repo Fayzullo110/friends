@@ -15,6 +15,9 @@ public class UserResponse {
   public boolean isOnline;
   public String lastActiveAt;
 
+  public boolean isPrivateAccount;
+  public String commentPolicy;
+
   public UserResponse(
       long id,
       String email,
@@ -28,7 +31,9 @@ public class UserResponse {
       String themeKey,
       Integer themeSeedColor,
       boolean isOnline,
-      String lastActiveAt) {
+      String lastActiveAt,
+      boolean isPrivateAccount,
+      String commentPolicy) {
     this.id = id;
     this.email = email;
     this.username = username;
@@ -42,5 +47,7 @@ public class UserResponse {
     this.themeSeedColor = themeSeedColor;
     this.isOnline = isOnline;
     this.lastActiveAt = lastActiveAt;
+    this.isPrivateAccount = isPrivateAccount;
+    this.commentPolicy = commentPolicy;
   }
 }

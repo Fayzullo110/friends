@@ -8,6 +8,12 @@ class ChatMessage {
   final ChatMessageType type;
   final String? text;
   final String? mediaUrl;
+  final String? replyToMessageId;
+  final String? replyToSenderId;
+  final String? replyToSenderUsername;
+  final ChatMessageType? replyToType;
+  final String? replyToText;
+  final String? replyToMediaUrl;
   final DateTime createdAt;
   final Map<String, List<String>> reactions;
   final List<String> seenBy;
@@ -20,6 +26,12 @@ class ChatMessage {
     required this.type,
     this.text,
     this.mediaUrl,
+    this.replyToMessageId,
+    this.replyToSenderId,
+    this.replyToSenderUsername,
+    this.replyToType,
+    this.replyToText,
+    this.replyToMediaUrl,
     required this.createdAt,
     required this.reactions,
     required this.seenBy,
@@ -37,6 +49,14 @@ class ChatMessage {
       type: _typeFromString(typeStr),
       text: data['text'] as String?,
       mediaUrl: data['mediaUrl'] as String?,
+      replyToMessageId: data['replyToMessageId']?.toString(),
+      replyToSenderId: data['replyToSenderId']?.toString(),
+      replyToSenderUsername: data['replyToSenderUsername'] as String?,
+      replyToType: data['replyToType'] == null
+          ? null
+          : _typeFromString(data['replyToType']?.toString()),
+      replyToText: data['replyToText'] as String?,
+      replyToMediaUrl: data['replyToMediaUrl'] as String?,
       createdAt: DateTime.fromMillisecondsSinceEpoch(
         (data['createdAt'] as num?)?.toInt() ?? 0,
         isUtc: false,
@@ -78,6 +98,29 @@ class ChatMessage {
       'type': typeStr,
       'text': text,
       'mediaUrl': mediaUrl,
+      'replyToMessageId': replyToMessageId,
+      'replyToSenderId': replyToSenderId,
+      'replyToSenderUsername': replyToSenderUsername,
+      'replyToType': replyToType == null
+          ? null
+          : (() {
+              switch (replyToType!) {
+                case ChatMessageType.gif:
+                  return 'gif';
+                case ChatMessageType.voice:
+                  return 'voice';
+                case ChatMessageType.video:
+                  return 'video';
+                case ChatMessageType.image:
+                  return 'image';
+                case ChatMessageType.file:
+                  return 'file';
+                case ChatMessageType.text:
+                  return 'text';
+              }
+            })(),
+      'replyToText': replyToText,
+      'replyToMediaUrl': replyToMediaUrl,
       'createdAt': createdAt.millisecondsSinceEpoch,
       'reactions': _encodeReactions(reactions),
       'seenBy': seenBy,

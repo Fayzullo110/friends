@@ -18,6 +18,9 @@ class AppUser {
   final bool isOnline;
   final DateTime? lastActiveAt;
 
+  final bool isPrivateAccount;
+  final String commentPolicy;
+
   AppUser({
     required this.id,
     required this.email,
@@ -37,6 +40,9 @@ class AppUser {
     this.badgeType,
     this.isOnline = false,
     this.lastActiveAt,
+
+    this.isPrivateAccount = false,
+    this.commentPolicy = 'everyone',
   });
 
   AppUser copyWith({
@@ -58,6 +64,8 @@ class AppUser {
     String? badgeType,
     bool? isOnline,
     DateTime? lastActiveAt,
+    bool? isPrivateAccount,
+    String? commentPolicy,
   }) {
     return AppUser(
       id: id ?? this.id,
@@ -78,6 +86,8 @@ class AppUser {
       badgeType: badgeType ?? this.badgeType,
       isOnline: isOnline ?? this.isOnline,
       lastActiveAt: lastActiveAt ?? this.lastActiveAt,
+      isPrivateAccount: isPrivateAccount ?? this.isPrivateAccount,
+      commentPolicy: commentPolicy ?? this.commentPolicy,
     );
   }
 
@@ -103,6 +113,8 @@ class AppUser {
       lastActiveAt: json['lastActiveAt'] != null
           ? DateTime.parse(json['lastActiveAt'] as String)
           : null,
+      isPrivateAccount: json['isPrivateAccount'] as bool? ?? false,
+      commentPolicy: (json['commentPolicy'] as String? ?? 'everyone').toString(),
     );
   }
 
@@ -125,6 +137,8 @@ class AppUser {
       'badgeType': badgeType,
       'isOnline': isOnline,
       'lastActiveAt': lastActiveAt?.toIso8601String(),
+      'isPrivateAccount': isPrivateAccount,
+      'commentPolicy': commentPolicy,
     };
   }
 }
